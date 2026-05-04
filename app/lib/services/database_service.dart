@@ -136,8 +136,9 @@ class DatabaseService {
         // ONLY match with people explicitly searching
         if (partnerStatus != 'searching') continue;
 
-        // Skip blocked users
-        if (currentUser.blockedUsers.contains(partnerUid)) continue;
+        // Skip blocked users (both ways)
+        final partnerBlockedList = (partnerData['blockedUsers'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+        if (currentUser.blockedUsers.contains(partnerUid) || partnerBlockedList.contains(currentUser.uid)) continue;
 
         return {
           'uid': partnerUid,
@@ -469,15 +470,28 @@ class DatabaseService {
   /// Send a friend request.
   Future<void> sendFriendRequest(String senderUid, String receiverUid) async {
     try {
+      // 1. Update receiver's incoming requests
       final receiverRef = _db.ref(AppConstants.usersPath).child(receiverUid).child('friendRequests');
-      final snapshot = await receiverRef.get();
-      List<String> requests = [];
-      if (snapshot.exists && snapshot.value != null) {
-        requests = (snapshot.value as List<dynamic>).map((e) => e.toString()).toList();
+      final recSnapshot = await receiverRef.get();
+      List<String> incoming = [];
+      if (recSnapshot.exists && recSnapshot.value != null) {
+        incoming = (recSnapshot.value as List<dynamic>).map((e) => e.toString()).toList();
       }
-      if (!requests.contains(senderUid)) {
-        requests.add(senderUid);
-        await receiverRef.set(requests);
+      if (!incoming.contains(senderUid)) {
+        incoming.add(senderUid);
+        await receiverRef.set(incoming);
+      }
+
+      // 2. Update sender's outgoing requests history
+      final senderRef = _db.ref(AppConstants.usersPath).child(senderUid).child('sentRequests');
+      final sendSnapshot = await senderRef.get();
+      List<String> outgoing = [];
+      if (sendSnapshot.exists && sendSnapshot.value != null) {
+        outgoing = (sendSnapshot.value as List<dynamic>).map((e) => e.toString()).toList();
+      }
+      if (!outgoing.contains(receiverUid)) {
+        outgoing.add(receiverUid);
+        await senderRef.set(outgoing);
       }
     } catch (e) {
       logger.e('Failed to send friend request', error: e);
@@ -621,24 +635,30 @@ class DatabaseService {
     }
   }
 
-  /// Find a user by their unique 6-digit displayId.
-  Future<UserModel?> getUserByDisplayId(String displayId) async {
+  /// Find a user by their unique 6-digit displayId or full UID.
+  Future<UserModel?> searchUser(String query) async {
     try {
+      // 1. Try searching by full UID first
+      final userByUid = await getUser(query);
+      if (userByUid != null) return userByUid;
+
+      // 2. Try searching by 6-digit displayId
       final snapshot = await _db
           .ref(AppConstants.usersPath)
           .orderByChild('displayId')
-          .equalTo(displayId)
+          .equalTo(query)
           .get();
 
-      if (!snapshot.exists || snapshot.value == null) return null;
-
-      final data = snapshot.value as Map<dynamic, dynamic>;
-      if (data.isEmpty) return null;
-
-      final entry = data.entries.first;
-      return UserModel.fromJson(entry.value as Map<dynamic, dynamic>, entry.key as String);
+      if (snapshot.exists && snapshot.value != null) {
+        final data = snapshot.value as Map<dynamic, dynamic>;
+        if (data.isNotEmpty) {
+          final entry = data.entries.first;
+          return UserModel.fromJson(entry.value as Map<dynamic, dynamic>, entry.key as String);
+        }
+      }
+      return null;
     } catch (e) {
-      logger.e('Failed to get user by displayId', error: e);
+      logger.e('Failed to search user', error: e);
       return null;
     }
   }

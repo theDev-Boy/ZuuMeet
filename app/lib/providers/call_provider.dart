@@ -9,6 +9,10 @@ import '../services/database_service.dart';
 import '../services/webrtc_service.dart';
 import '../utils/constants.dart';
 
+import 'package:logger/logger.dart';
+
+final logger = Logger();
+
 enum CallState { idle, searching, connecting, connected, ended, error }
 
 class CallProvider extends ChangeNotifier {
@@ -77,8 +81,12 @@ class CallProvider extends ChangeNotifier {
         notifyListeners();
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
                  state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
-        _onPartnerEndedCall();
+        _onPartnerEndedCall(currentUserUid: null); // We'll handle UID inside
       }
+    };
+
+    _webRTCService.onConnectionConnected = () {
+      _startCallTimer();
     };
   }
 
@@ -112,6 +120,10 @@ class CallProvider extends ChangeNotifier {
               final partnerStatus = partnerData['status'] as String? ?? '';
 
               if (partnerStatus == 'searching') {
+                // Check if blocked (both ways)
+                final partnerBlocked = (partnerData['blockedUsers'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+                if (currentUser.blockedUsers.contains(partnerUid) || partnerBlocked.contains(currentUser.uid)) continue;
+
                 final isInitiator = currentUser.uid.compareTo(partnerUid) < 0;
 
                 if (isInitiator) {
@@ -229,7 +241,6 @@ class CallProvider extends ChangeNotifier {
       await _webRTCService.joinRoom(roomId);
 
       _state = CallState.connected;
-      _startCallTimer();
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {
@@ -249,7 +260,12 @@ class CallProvider extends ChangeNotifier {
     });
   }
 
-  void _onPartnerEndedCall() async {
+  void _onPartnerEndedCall({String? currentUserUid}) async {
+    // Save to history before clearing
+    if (_currentMatch != null && _callDurationSeconds > 0 && currentUserUid != null) {
+      _saveCallToHistory(currentUserUid);
+    }
+
     _stopCallTimer();
     _cancelSubscriptions();
     await _webRTCService.hangUp(localRenderer);
@@ -258,7 +274,6 @@ class CallProvider extends ChangeNotifier {
     _currentMatch = null;
     _partnerName = null;
     _partnerCountry = null;
-    _callDurationSeconds = 0;
     
     _state = CallState.ended;
     notifyListeners();
@@ -271,7 +286,35 @@ class CallProvider extends ChangeNotifier {
     });
   }
 
+  Future<void> _saveCallToHistory(String myUid) async {
+    if (_currentMatch == null || _partnerName == null) return;
+    try {
+      final historyRef = FirebaseDatabase.instance
+          .ref('call_history')
+          .child(myUid)
+          .push();
+      
+      await historyRef.set({
+        'id': historyRef.key,
+        'partnerUid': _currentMatch!.user1 == myUid ? _currentMatch!.user2 : _currentMatch!.user1,
+        'partnerName': _partnerName,
+        'timestamp': ServerValue.timestamp,
+        'durationSeconds': _callDurationSeconds,
+        'type': _videoEnabled ? 'video' : 'audio',
+        'status': 'connected',
+      });
+      logger.i('Call history saved for $myUid');
+    } catch (e) {
+      logger.w('Failed to save call history: $e');
+    }
+  }
+
   Future<void> endCall(String myUid) async {
+    // Save to history before ending
+    if (_currentMatch != null && _callDurationSeconds > 0) {
+      await _saveCallToHistory(myUid);
+    }
+    
     _stopCallTimer();
     _cancelSubscriptions();
     if (_currentMatch != null) {

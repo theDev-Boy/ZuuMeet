@@ -17,6 +17,7 @@ class UserModel extends Equatable {
   final List<String> blockedUsers;
   final List<String> friends;
   final List<String> friendRequests;
+  final List<String> sentRequests;
   final String avatarUrl;
   final String frameId;
   final bool isVip;
@@ -38,6 +39,7 @@ class UserModel extends Equatable {
     this.blockedUsers = const [],
     this.friends = const [],
     this.friendRequests = const [],
+    this.sentRequests = const [],
     this.avatarUrl = '',
     this.frameId = 'free_border',
     this.isVip = false,
@@ -70,6 +72,10 @@ class UserModel extends Equatable {
               ?.map((e) => e.toString())
               .toList() ??
           [],
+      sentRequests: (json['sentRequests'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          [],
       avatarUrl: json['avatarUrl'] as String? ?? '',
       frameId: json['frameId'] as String? ?? 'free_border',
       isVip: json['isVip'] as bool? ?? false,
@@ -94,6 +100,7 @@ class UserModel extends Equatable {
       'blockedUsers': blockedUsers,
       'friends': friends,
       'friendRequests': friendRequests,
+      'sentRequests': sentRequests,
       'avatarUrl': avatarUrl,
       'frameId': frameId,
       'isVip': isVip,
@@ -115,6 +122,7 @@ class UserModel extends Equatable {
     List<String>? blockedUsers,
     List<String>? friends,
     List<String>? friendRequests,
+    List<String>? sentRequests,
     String? avatarUrl,
     String? frameId,
     bool? isVip,
@@ -136,6 +144,7 @@ class UserModel extends Equatable {
       blockedUsers: blockedUsers ?? this.blockedUsers,
       friends: friends ?? this.friends,
       friendRequests: friendRequests ?? this.friendRequests,
+      sentRequests: sentRequests ?? this.sentRequests,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       frameId: frameId ?? this.frameId,
       isVip: isVip ?? this.isVip,

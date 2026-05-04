@@ -125,7 +125,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
 
         return Scaffold(
           body: DefaultTabController(
-            length: 2,
+            length: 3,
             child: Column(
               children: [
                 TabBar(
@@ -135,6 +135,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                   tabs: [
                     Tab(text: 'Friends (${user.friends.length})'),
                     Tab(text: 'Requests (${user.friendRequests.length})'),
+                    Tab(text: 'Sent (${user.sentRequests.length})'),
                   ],
                 ),
                 Expanded(
@@ -142,6 +143,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     children: [
                       _buildFriendsList(user, isDark),
                       _buildRequestsList(user, isDark),
+                      _buildSentRequestsList(user, isDark),
                     ],
                   ),
                 ),
@@ -174,67 +176,70 @@ class _FriendsScreenState extends State<FriendsScreen> {
     if (user.friends.isEmpty) {
       return const Center(child: Text('No friends yet. Add friends during an active call!'));
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: user.friends.length,
-      itemBuilder: (context, index) {
-        final friendUid = user.friends[index];
-        // Stream each friend's online status instantly
-        return StreamBuilder<DatabaseEvent>(
-          stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(friendUid).onValue,
-          builder: (context, snapshot) {
-             if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
-               return const SizedBox.shrink();
-             }
-             final friendData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
-             final friend = UserModel.fromJson(friendData, friendUid);
+    return RefreshIndicator(
+      onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
+      color: AppColors.primary,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: user.friends.length,
+        itemBuilder: (context, index) {
+          final friendUid = user.friends[index];
+          return StreamBuilder<DatabaseEvent>(
+            stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(friendUid).onValue,
+            builder: (context, snapshot) {
+               if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
+                 return const SizedBox.shrink();
+               }
+               final friendData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+               final friend = UserModel.fromJson(friendData, friendUid);
 
-            return ListTile(
-              onTap: () => _showProfileInfo(friend),
-              leading: Stack(
-                children: [
-                  AvatarWidget(
-                    name: friend.name,
-                    avatarCode: friend.avatarUrl,
-                    radius: 20,
-                  ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        color: friend.isOnline ? AppColors.success : Colors.grey,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: isDark ? const Color(0xFF1E1E1E) : Colors.white, width: 2),
-                      ),
+              return ListTile(
+                onTap: () => _showProfileInfo(friend),
+                leading: Stack(
+                  children: [
+                    AvatarWidget(
+                      name: friend.name,
+                      avatarCode: friend.avatarUrl,
+                      radius: 20,
                     ),
-                  )
-                ],
-              ),
-              title: Text(friend.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(friend.isOnline ? 'Online' : 'Offline', 
-                style: TextStyle(color: friend.isOnline ? AppColors.success : AppColors.textSecondary, fontSize: 13)
-              ),
-              trailing: PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert),
-                onSelected: (val) {
-                  if (val == 'remove') {
-                    _db.removeFriend(user.uid, friend.uid);
-                  } else if (val == 'block') {
-                    _db.blockUser(user.uid, friend.uid);
-                    _db.removeFriend(user.uid, friend.uid);
-                  }
-                },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'remove', child: Text('Remove Friend', style: TextStyle(color: AppColors.error))),
-                  PopupMenuItem(value: 'block', child: Text('Block User')),
-                ],
-              ),
-            );
-          },
-        );
-      },
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 12, height: 12,
+                        decoration: BoxDecoration(
+                          color: friend.isOnline ? AppColors.success : Colors.grey,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: isDark ? const Color(0xFF1E1E1E) : Colors.white, width: 2),
+                        ),
+                      ),
+                    )
+                  ],
+                ),
+                title: Text(friend.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(friend.isOnline ? 'Online' : 'Offline', 
+                  style: TextStyle(color: friend.isOnline ? AppColors.success : AppColors.textSecondary, fontSize: 13)
+                ),
+                trailing: PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert),
+                  onSelected: (val) {
+                    if (val == 'remove') {
+                      _db.removeFriend(user.uid, friend.uid);
+                    } else if (val == 'block') {
+                      _db.blockUser(user.uid, friend.uid);
+                      _db.removeFriend(user.uid, friend.uid);
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'remove', child: Text('Remove Friend', style: TextStyle(color: AppColors.error))),
+                    PopupMenuItem(value: 'block', child: Text('Block User')),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -242,42 +247,104 @@ class _FriendsScreenState extends State<FriendsScreen> {
     if (user.friendRequests.isEmpty) {
       return const Center(child: Text('No pending requests.'));
     }
-    return ListView.builder(
-      padding: const EdgeInsets.all(16),
-      itemCount: user.friendRequests.length,
-      itemBuilder: (context, index) {
-        final reqUid = user.friendRequests[index];
-        return FutureBuilder<UserModel?>(
-          future: _db.getUser(reqUid),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) return const SizedBox.shrink();
-            final reqUser = snapshot.data!;
-            return ListTile(
-              onTap: () => _showProfileInfo(reqUser),
-              leading: AvatarWidget(
-                name: reqUser.name,
-                avatarCode: reqUser.avatarUrl,
-                radius: 20,
-              ),
-              title: Text(reqUser.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Sent you a friend request'),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 28),
-                    onPressed: () => _db.acceptFriendRequest(user.uid, reqUser.uid),
+    return RefreshIndicator(
+      onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
+      color: AppColors.primary,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: user.friendRequests.length,
+        itemBuilder: (context, index) {
+          final reqUid = user.friendRequests[index];
+          return FutureBuilder<UserModel?>(
+            future: _db.getUser(reqUid),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              final reqUser = snapshot.data!;
+              return Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                elevation: 0,
+                color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[100],
+                child: ListTile(
+                  onTap: () => _showProfileInfo(reqUser),
+                  leading: AvatarWidget(
+                    name: reqUser.name,
+                    avatarCode: reqUser.avatarUrl,
+                    radius: 20,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.cancel_rounded, color: AppColors.error, size: 28),
-                    onPressed: () => _db.rejectFriendRequest(user.uid, reqUser.uid),
+                  title: Text(reqUser.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Sent you a friend request', style: TextStyle(fontSize: 12)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 28),
+                        onPressed: () => _db.acceptFriendRequest(user.uid, reqUser.uid),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.cancel_rounded, color: AppColors.error, size: 28),
+                        onPressed: () => _db.rejectFriendRequest(user.uid, reqUser.uid),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSentRequestsList(UserModel user, bool isDark) {
+    if (user.sentRequests.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.send_rounded, size: 64, color: AppColors.primary.withValues(alpha: 0.1)),
+            const SizedBox(height: 16),
+            const Text('No sent requests', style: TextStyle(color: AppColors.textSecondary)),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
+      color: AppColors.primary,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: user.sentRequests.length,
+        itemBuilder: (context, index) {
+          final reqUid = user.sentRequests[index];
+          return FutureBuilder<UserModel?>(
+            future: _db.getUser(reqUid),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox.shrink();
+              final reqUser = snapshot.data!;
+              return Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                elevation: 0,
+                color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[100],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: ListTile(
+                  leading: AvatarWidget(
+                    name: reqUser.name,
+                    avatarCode: reqUser.avatarUrl,
+                    radius: 20,
+                  ),
+                  title: Text(reqUser.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('Pending approval', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                  trailing: TextButton(
+                    onPressed: () => _db.rejectFriendRequest(reqUser.uid, user.uid),
+                    child: const Text('Cancel', style: TextStyle(color: AppColors.error)),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
@@ -300,9 +367,9 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
 
   void _onSearch() async {
     final query = _searchCtrl.text.trim();
-    if (query.length != 6) {
+    if (query.length < 6) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a 6-digit UID')),
+        const SnackBar(content: Text('Please enter a valid ZuuID or UID')),
       );
       return;
     }
@@ -314,14 +381,15 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
       _requestSent = false;
     });
 
-    final user = await _db.getUserByDisplayId(query);
+    final user = await _db.searchUser(query);
     
     if (mounted) {
       setState(() {
         _isSearching = false;
         _foundUser = user;
         if (user != null) {
-          _requestSent = user.friendRequests.contains(widget.currentUser.uid);
+          _requestSent = user.friendRequests.contains(widget.currentUser.uid) || 
+                         widget.currentUser.sentRequests.contains(user.uid);
         }
       });
     }
@@ -471,12 +539,27 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
           const Text('This is you!', style: TextStyle(fontStyle: FontStyle.italic, color: AppColors.textSecondary))
         else if (alreadyFriends)
           ElevatedButton.icon(
-            onPressed: null,
-            icon: const Icon(Icons.check_circle_rounded),
-            label: const Text('Already Friends'),
+            onPressed: () async {
+              final myUid = widget.currentUser.uid;
+              final partnerUid = _foundUser!.uid;
+              final chatId = [myUid, partnerUid]..sort();
+              final finalId = chatId.join('_');
+              
+              // Initialize chat meta if it doesn't exist
+              await FirebaseDatabase.instance.ref('chats_meta').child(finalId).update({
+                'participants': [myUid, partnerUid],
+                'lastMessageTime': ServerValue.timestamp,
+              });
+
+              if (mounted) {
+                Navigator.pop(context);
+                context.push('/chat/$finalId');
+              }
+            },
+            icon: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
+            label: const Text('Start Chatting', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             style: ElevatedButton.styleFrom(
-              disabledBackgroundColor: AppColors.success.withValues(alpha: 0.2),
-              disabledForegroundColor: AppColors.success,
+              backgroundColor: AppColors.primary,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               minimumSize: const Size(double.infinity, 54),
             ),

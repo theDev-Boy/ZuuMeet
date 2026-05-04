@@ -1,10 +1,9 @@
-We are getting this error please fix it now and also i said that i will make fresh flutter app and then i will treafer nessury and lib file i have trsffer now add github workflow to build apk and also
-is there any error or something else abafter changing the project fix it now and please changed the name and package name of app to the ZuuMeet and also this paskage com.zuumeet.com okay its the package name 
-PS C:\flutter_app_website\ZuuMeet\ZuuMeet\app> flutter analyze
-Analyzing app...                                                        
+See me project its a random + messgner user application okay and now i need some chnages okay 1 the new_icon is net set yet please check and set it now and 
+2: 2nd thigs is the user uid when we make any account our user id will saved ad its happining okay and we can see the seetings uid in the okay
+but when i type uid of someone in the app like add user and when i tpe user uid and then its showing that unvaild uid whchi is the issue okay fix it now when we type vaild uid we got
+his name and his full data like details and we are able to see his profile okay and we got send frends requests okay and if already friend then we got chat btn okay and in the freinds setioon we got all resquets whchi we did now we hace just 2 option in the frinds okay like frinds and requests okay but we aso have sent reqests okay whare is our full history that when we sen dreqest to whom 
+and is he accepted or not or cancle request okay and delete reqest from history okay
+and when we clcik on the start chating in the home section whare we meet random persons when i clcik o that okay then we got random persons okay but its too slow and its when we coccnte its just black screen and i means not conctioning with others and in the some phones just sow sreaching loding i neans permanent loops okay fix it now that eery user got conction with eevry random guy if he is not blokced okay i means
 
-  error - The name 'MyApp' isn't a class - test\widget_test.dart:16:35 - creation_with_non_type
-
-1 issue found. (ran in 14.3s)
-PS C:\flutter_app_website\ZuuMeet\ZuuMeet\app> 
-
+if user1 has bloked the user2 then they never becomes in the chat random okay and when they connect to someone random fercftly and fast thenn they got connection okay then from she staring the sec start okay like 1 2 3 4 5 and like this okay and then after this add a user profile okay we got on the top we got user name and his dp okay and when we clcik we have a 3 dots when we clcik we got view prile or send reqests okay and block okay 
+and real data not demo okay and the block someone sys should work fine and in the call history add the real call history i saw the history is not saving here we have all history of calls with random guys and his names and data and time , duration, delete histroy btn and clear all history btn with smooth animations good luck and make every thng fine and productions level and just focous on the every single fetures but mst be connectable and workable and work microphone or Camara fastly

@@ -529,7 +529,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   return const Center(child: CircularProgressIndicator(color: AppColors.primary));
                 }
 
-                final messages = snapshot.data!;
+                final messages = snapshot.data!.reversed.toList();
                 unawaited(chatProvider.markDelivered(widget.chatId));
                 unawaited(chatProvider.markSeen(widget.chatId));
 
@@ -547,12 +547,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
 
                 return ListView.builder(
+                  reverse: true,
                   controller: _scrollCtrl,
                   padding: const EdgeInsets.all(12),
                   itemCount: messages.length + 1, // +1 for typing indicator
                   itemBuilder: (context, index) {
-                    // Typing indicator at the end
-                    if (index == messages.length) {
+                    // Typing indicator now at the VERY bottom (index 0 when reversed)
+                    if (index == 0) {
                       return StreamBuilder<ChatModel?>(
                         stream: chatProvider.getChatMeta(widget.chatId),
                         builder: (context, metaSnap) {
@@ -586,7 +587,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       );
                     }
 
-                    final msg = messages[index];
+                    final msg = messages[index - 1]; // Offset by 1 because of typing indicator
                     final isMe = msg.senderId == myUid;
                     return _buildMessageBubble(msg, isMe);
                   },

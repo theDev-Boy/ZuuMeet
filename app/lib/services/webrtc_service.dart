@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../utils/logger.dart';
 
@@ -13,6 +14,7 @@ class WebRTCService {
   String? currentRoomText;
   StreamStateCallback? onAddRemoteStream;
   CallStateCallback? onCallStateChange;
+  VoidCallback? onConnectionConnected; // New callback for precise timing
 
   final FirebaseFirestore db = FirebaseFirestore.instance;
 
@@ -69,9 +71,10 @@ class WebRTCService {
     roomId = roomRef.id;
 
     peerConnection?.onTrack = (RTCTrackEvent event) {
-      event.streams[0].getTracks().forEach((track) {
-        remoteStream?.addTrack(track);
-      });
+      if (event.streams.isNotEmpty) {
+        onAddRemoteStream?.call(event.streams[0]);
+        remoteStream = event.streams[0];
+      }
     };
 
     // Listen for remote answer
@@ -126,9 +129,10 @@ class WebRTCService {
     };
 
     peerConnection?.onTrack = (RTCTrackEvent event) {
-      event.streams[0].getTracks().forEach((track) {
-        remoteStream?.addTrack(track);
-      });
+      if (event.streams.isNotEmpty) {
+        onAddRemoteStream?.call(event.streams[0]);
+        remoteStream = event.streams[0];
+      }
     };
 
     var data = roomSnapshot.data() as Map<String, dynamic>;
@@ -177,12 +181,11 @@ class WebRTCService {
   }
 
   void registerPeerConnectionListeners() {
-    peerConnection?.onAddStream = (MediaStream stream) {
-      onAddRemoteStream?.call(stream);
-      remoteStream = stream;
-    };
     peerConnection?.onConnectionState = (RTCPeerConnectionState state) {
       onCallStateChange?.call(state);
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        onConnectionConnected?.call();
+      }
     };
   }
 

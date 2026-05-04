@@ -62,115 +62,119 @@ class _MessengerScreenState extends State<MessengerScreen> {
           ),
         ],
       ),
-      body: chatProvider.chats.isEmpty
-          ? _buildEmptyState()
-          : ListView.separated(
-              itemCount: chatProvider.chats.length,
-              separatorBuilder: (context, index) => Divider(indent: 80, height: 1, color: Colors.grey.withValues(alpha: 0.15)),
-              itemBuilder: (context, index) {
-                final chat = chatProvider.chats[index];
-                final partnerId = chat.participants.firstWhere(
-                  (id) => id != myUid,
-                  orElse: () => '',
-                );
-
-                return FutureBuilder<UserModel?>(
-                  future: _getUser(partnerId),
-                  builder: (context, snap) {
-                      final partner = snap.data;
-                    final partnerName = partner?.name ?? 'Loading...';
-                    final partnerAvatar = partner?.avatarUrl ?? '';
-                    final isBlocked = auth.userModel?.blockedUsers.contains(partnerId) ?? false;
-
-                    return GestureDetector(
-                      onLongPress: () => _showDeleteChatDialog(chat.chatId, partnerName),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                        tileColor: isBlocked ? AppColors.error.withValues(alpha: 0.1) : null,
-                        leading: Stack(
-                          children: [
-                            Container(
-                              decoration: isBlocked
-                                  ? BoxDecoration(
+      body: RefreshIndicator(
+        onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
+        color: AppColors.primary,
+        child: chatProvider.chats.isEmpty
+            ? _buildEmptyState()
+            : ListView.separated(
+                itemCount: chatProvider.chats.length,
+                separatorBuilder: (context, index) => Divider(indent: 80, height: 1, color: Colors.grey.withValues(alpha: 0.15)),
+                itemBuilder: (context, index) {
+                  final chat = chatProvider.chats[index];
+                  final partnerId = chat.participants.firstWhere(
+                    (id) => id != myUid,
+                    orElse: () => '',
+                  );
+  
+                  return FutureBuilder<UserModel?>(
+                    future: _getUser(partnerId),
+                    builder: (context, snap) {
+                        final partner = snap.data;
+                      final partnerName = partner?.name ?? 'Loading...';
+                      final partnerAvatar = partner?.avatarUrl ?? '';
+                      final isBlocked = auth.userModel?.blockedUsers.contains(partnerId) ?? false;
+  
+                      return GestureDetector(
+                        onLongPress: () => _showDeleteChatDialog(chat.chatId, partnerName),
+                        child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          tileColor: isBlocked ? AppColors.error.withValues(alpha: 0.1) : null,
+                          leading: Stack(
+                            children: [
+                              Container(
+                                decoration: isBlocked
+                                    ? BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: AppColors.error, width: 2),
+                                      )
+                                    : null,
+                                child: AvatarWidget(name: partnerName, avatarCode: partnerAvatar, radius: 28),
+                              ),
+                              // Online indicator
+                              if (partner != null && partner.isOnline && !isBlocked)
+                                Positioned(
+                                  right: 0,
+                                  bottom: 0,
+                                  child: Container(
+                                    width: 14,
+                                    height: 14,
+                                    decoration: BoxDecoration(
+                                      color: AppColors.success,
                                       shape: BoxShape.circle,
-                                      border: Border.all(color: AppColors.error, width: 2),
-                                    )
-                                  : null,
-                              child: AvatarWidget(name: partnerName, avatarCode: partnerAvatar, radius: 28),
-                            ),
-                            // Online indicator
-                            if (partner != null && partner.isOnline && !isBlocked)
-                              Positioned(
-                                right: 0,
-                                bottom: 0,
-                                child: Container(
-                                  width: 14,
-                                  height: 14,
-                                  decoration: BoxDecoration(
-                                    color: AppColors.success,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Theme.of(context).scaffoldBackgroundColor,
-                                      width: 2,
+                                      border: Border.all(
+                                        color: Theme.of(context).scaffoldBackgroundColor,
+                                        width: 2,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                          ],
-                        ),
-                        title: Text(
-                          partnerName + (isBlocked ? ' (Blocked)' : ''),
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold, 
-                            fontSize: 16,
-                            color: isBlocked ? AppColors.error : null,
+                            ],
                           ),
-                        ),
-                        subtitle: Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            isBlocked ? 'Tap to view or unblock.' : chat.lastMessage,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: isBlocked ? AppColors.error.withValues(alpha: 0.8) : AppColors.textSecondary, fontSize: 14),
-                          ),
-                        ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              _formatTime(chat.lastMessageTime),
-                              style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                          title: Text(
+                            partnerName + (isBlocked ? ' (Blocked)' : ''),
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold, 
+                              fontSize: 16,
+                              color: isBlocked ? AppColors.error : null,
                             ),
-                            const SizedBox(height: 6),
-                            if (chat.unreadCounts[myUid] != null && chat.unreadCounts[myUid]! > 0 && !isBlocked)
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                                decoration: BoxDecoration(
-                                  color: AppColors.primary,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  '${chat.unreadCounts[myUid]}',
-                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                                ),
+                          ),
+                          subtitle: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              isBlocked ? 'Tap to view or unblock.' : chat.lastMessage,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: isBlocked ? AppColors.error.withValues(alpha: 0.8) : AppColors.textSecondary, fontSize: 14),
+                            ),
+                          ),
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                _formatTime(chat.lastMessageTime),
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                               ),
-                          ],
+                              const SizedBox(height: 6),
+                              if (chat.unreadCounts[myUid] != null && chat.unreadCounts[myUid]! > 0 && !isBlocked)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    '${chat.unreadCounts[myUid]}',
+                                    style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          onTap: () {
+                            if (isBlocked) {
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot open chat with a blocked user.')));
+                              return;
+                            }
+                            context.push('/chat/${chat.chatId}');
+                          },
                         ),
-                        onTap: () {
-                          if (isBlocked) {
-                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot open chat with a blocked user.')));
-                            return;
-                          }
-                          context.push('/chat/${chat.chatId}');
-                        },
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+                      );
+                    },
+                  );
+                },
+              ),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showNewChatPicker(),
         backgroundColor: AppColors.primary,
