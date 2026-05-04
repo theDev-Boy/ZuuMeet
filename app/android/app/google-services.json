@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "379184229371",
+    "firebase_url": "https://buddyx-d2d20-default-rtdb.firebaseio.com",
+    "project_id": "buddyx-d2d20",
+    "storage_bucket": "buddyx-d2d20.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:379184229371:android:6d0e7c8e71a5843758b95e",
+        "android_client_info": {
+          "package_name": "com.zuumeet.com"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "379184229371-s1o30i23dudfcfrgre72aevessdg3853.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDfssee0yJe4W-SrrSshSJtUavhMGdlXDI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "379184229371-s1o30i23dudfcfrgre72aevessdg3853.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
