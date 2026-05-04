@@ -33,9 +33,11 @@ jobs:
           cache: true
 
       - name: Install Dependencies
+        working-directory: app
         run: flutter pub get
 
       - name: Build APK
+        working-directory: app
         run: flutter build apk --release --no-tree-shake-icons --no-pub
         env:
           JAVA_OPTS: "-Xmx3G"
@@ -45,4 +47,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zuumeet-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
