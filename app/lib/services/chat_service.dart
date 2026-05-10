@@ -1,5 +1,6 @@
 import 'package:firebase_database/firebase_database.dart';
 import '../models/message_model.dart';
+import 'database_service.dart';
 
 class ChatService {
   final DatabaseReference _db = FirebaseDatabase.instance.ref();
@@ -12,10 +13,12 @@ class ChatService {
   }
 
   /// Send a message to a chat.
-  Future<void> sendMessage(String chatId, MessageModel message) async {
+  Future<void> sendMessage(String chatId, MessageModel message, {String? senderName}) async {
     final msgData = message.toMap();
     await _db.child('chats').child(chatId).child('messages').push().set(msgData);
     final participants = chatId.split('_');
+    final receiverUid = participants.firstWhere((id) => id != message.senderId, orElse: () => '');
+    
     final metaRef = _db.child('chats_meta').child(chatId);
     final metaSnapshot = await metaRef.get();
     final currentMeta = metaSnapshot.value is Map
@@ -29,8 +32,16 @@ class ChatService {
       final currentCount = (existingUnread[uid] as num?)?.toInt() ?? 0;
       unreadCounts[uid] = uid == message.senderId ? 0 : currentCount + 1;
     }
-    final lastMessage =
-        message.type == MessageType.voice ? 'Voice message' : message.text;
+    String lastMessage = message.text;
+    if (message.type == MessageType.voice) {
+      if (message.voiceDurationMs != null) {
+        final sec = (message.voiceDurationMs! / 1000).round();
+        final secStr = sec.toString().padLeft(2, '0');
+        lastMessage = '${secStr}sec voice message';
+      } else {
+        lastMessage = 'Voice message';
+      }
+    }
 
     await metaRef.update({
       'lastMessage': lastMessage,
@@ -38,6 +49,21 @@ class ChatService {
       'participants': participants,
       'unreadCounts': unreadCounts,
     });
+
+    // Trigger notification
+    if (receiverUid.isNotEmpty) {
+      final db = DatabaseService();
+      await db.sendNotificationTrigger(
+        receiverUid: receiverUid,
+        senderName: senderName ?? 'New Message',
+        type: 'message',
+        data: {
+          'chatId': chatId,
+          'body': lastMessage,
+          'senderId': message.senderId,
+        },
+      );
+    }
   }
 
   Future<void> markIncomingMessageStatus(

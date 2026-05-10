@@ -11,6 +11,7 @@ import '../config/app_typography.dart';
 import '../models/user_model.dart';
 import '../services/database_service.dart';
 import '../services/chat_service.dart';
+import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 
 class MessengerScreen extends StatefulWidget {
@@ -77,12 +78,16 @@ class _MessengerScreenState extends State<MessengerScreen> {
                     orElse: () => '',
                   );
   
-                  return FutureBuilder<UserModel?>(
-                    future: _getUser(partnerId),
-                    builder: (context, snap) {
-                        final partner = snap.data;
-                      final partnerName = partner?.name ?? 'Loading...';
-                      final partnerAvatar = partner?.avatarUrl ?? '';
+                  return StreamBuilder<DatabaseEvent>(
+                    stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(partnerId).onValue,
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
+                        return const SizedBox.shrink();
+                      }
+                      final partnerData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+                      final partner = UserModel.fromJson(partnerData, partnerId);
+                      final partnerName = partner.name;
+                      final partnerAvatar = partner.avatarUrl;
                       final isBlocked = auth.userModel?.blockedUsers.contains(partnerId) ?? false;
   
                       return GestureDetector(
@@ -102,7 +107,7 @@ class _MessengerScreenState extends State<MessengerScreen> {
                                 child: AvatarWidget(name: partnerName, avatarCode: partnerAvatar, radius: 28),
                               ),
                               // Online indicator
-                              if (partner != null && partner.isOnline && !isBlocked)
+                              if (partner.isOnline && !isBlocked)
                                 Positioned(
                                   right: 0,
                                   bottom: 0,
@@ -163,7 +168,12 @@ class _MessengerScreenState extends State<MessengerScreen> {
                           ),
                           onTap: () {
                             if (isBlocked) {
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cannot open chat with a blocked user.')));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Please unblock first in the settings option then make conversation.'),
+                                  backgroundColor: AppColors.error,
+                                ),
+                              );
                               return;
                             }
                             context.push('/chat/${chat.chatId}');
@@ -289,49 +299,87 @@ class _MessengerScreenState extends State<MessengerScreen> {
               const Text('Choose a friend to start chatting', style: TextStyle(color: AppColors.textSecondary)),
               const SizedBox(height: 16),
               Expanded(
-                child: friends.isEmpty
-                    ? const Center(child: Text('No friends found.'))
-                    : ListView.separated(
-                        itemCount: friends.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, index) {
-                          final friend = friends[index];
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                            leading: Stack(
-                              children: [
-                                AvatarWidget(name: friend.name, avatarCode: friend.avatarUrl, radius: 22),
-                                if (friend.isOnline)
-                                  Positioned(
-                                    right: 0, bottom: 0,
-                                    child: Container(
-                                      width: 12, height: 12,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.success, shape: BoxShape.circle,
-                                        border: Border.all(color: isDark ? const Color(0xFF1E1E1E) : Colors.white, width: 2),
+                    child: StreamBuilder<DatabaseEvent>(
+                      stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).onValue,
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
+                          return const Center(child: CircularProgressIndicator());
+                        }
+                        
+                        final allUsersData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+                        final List<UserModel> currentFriends = [];
+                        
+                        // Filter friends only
+                        for (final fid in (auth.userModel?.friends ?? [])) {
+                          if (allUsersData.containsKey(fid)) {
+                            currentFriends.add(UserModel.fromJson(Map<dynamic, dynamic>.from(allUsersData[fid]), fid));
+                          }
+                        }
+
+                        if (currentFriends.isEmpty) {
+                          return const Center(child: Text('No friends found.'));
+                        }
+
+                        return ListView.separated(
+                          itemCount: currentFriends.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final friend = currentFriends[index];
+                            final isBlocked = auth.userModel?.blockedUsers.contains(friend.uid) ?? false;
+                            return ListTile(
+                              contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                              leading: Stack(
+                                children: [
+                                  AvatarWidget(name: friend.name, avatarCode: friend.avatarUrl, radius: 22),
+                                  if (friend.isOnline && !isBlocked)
+                                    Positioned(
+                                      right: 0, bottom: 0,
+                                      child: Container(
+                                        width: 12, height: 12,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.success, shape: BoxShape.circle,
+                                          border: Border.all(color: isDark ? const Color(0xFF1E1E1E) : Colors.white, width: 2),
+                                        ),
                                       ),
                                     ),
-                                  ),
-                              ],
-                            ),
-                            title: Text(friend.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text(friend.isOnline ? 'Online' : 'Offline',
-                              style: TextStyle(color: friend.isOnline ? AppColors.success : AppColors.textSecondary, fontSize: 12),
-                            ),
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              final chatId = chatService.getChatId(myUid, friend.uid);
-                              // Ensure chat meta exists
-                              FirebaseDatabase.instance.ref('chats_meta').child(chatId).update({
-                                'participants': [myUid, friend.uid],
-                                'lastMessage': '',
-                                'lastMessageTime': DateTime.now().millisecondsSinceEpoch,
-                              });
-                              context.push('/chat/$chatId');
-                            },
-                          );
-                        },
-                      ),
+                                ],
+                              ),
+                              title: Text(friend.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                              subtitle: Text(
+                                isBlocked ? 'Blocked' : (friend.isOnline ? 'Online' : 'Offline'),
+                                style: TextStyle(
+                                  color: isBlocked ? AppColors.error : (friend.isOnline ? AppColors.success : AppColors.textSecondary),
+                                  fontSize: 12,
+                                ),
+                              ),
+                              trailing: isBlocked 
+                                ? const Icon(Icons.block, color: AppColors.error, size: 20)
+                                : const Icon(Icons.chevron_right_rounded),
+                              onTap: () {
+                                if (isBlocked) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Please unblock first in the settings option then make conversation.'),
+                                      backgroundColor: AppColors.error,
+                                    ),
+                                  );
+                                  return;
+                                }
+                                Navigator.pop(ctx);
+                                final chatId = chatService.getChatId(myUid, friend.uid);
+                                // Ensure chat meta exists
+                                FirebaseDatabase.instance.ref('chats_meta').child(chatId).update({
+                                  'participants': [myUid, friend.uid],
+                                  'lastMessage': '',
+                                  'lastMessageTime': DateTime.now().millisecondsSinceEpoch,
+                                });
+                                context.push('/chat/$chatId');
+                              },
+                            );
+                          },
+                        );
+                      },
+                    ),
               ),
             ],
           ),

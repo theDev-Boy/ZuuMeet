@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -397,6 +398,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final auth = context.read<AuthProvider>();
     final chatProvider = context.watch<ChatProvider>();
     final myUid = auth.firebaseUser!.uid;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
@@ -464,13 +466,30 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.videocam_rounded),
-            onPressed: _startVideoCall,
-          ),
-          IconButton(
-            icon: const Icon(Icons.call_rounded),
-            onPressed: _startAudioCall,
+          StreamBuilder<DatabaseEvent>(
+            stream: FirebaseDatabase.instance.ref('users').child(_partnerId).onValue,
+            builder: (context, snapshot) {
+              final isBlockedByPartner = snapshot.hasData && 
+                  snapshot.data!.snapshot.value != null && 
+                  (Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map)['blockedUsers'] as List<dynamic>?)?.contains(myUid) == true;
+              final hasIBlockedPartner = auth.userModel?.blockedUsers.contains(_partnerId) ?? false;
+              final isBlocked = isBlockedByPartner || hasIBlockedPartner;
+
+              return Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.videocam_rounded),
+                    onPressed: isBlocked ? null : _startVideoCall,
+                    color: isBlocked ? Colors.white24 : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.call_rounded),
+                    onPressed: isBlocked ? null : _startAudioCall,
+                    color: isBlocked ? Colors.white24 : null,
+                  ),
+                ],
+              );
+            },
           ),
           PopupMenuButton<String>(
             onSelected: (val) {
@@ -616,8 +635,38 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
 
-          // Input area
-          _buildInputArea(),
+          // Input area or Blocked Message
+          StreamBuilder<DatabaseEvent>(
+            stream: FirebaseDatabase.instance.ref('users').child(_partnerId).onValue,
+            builder: (context, snapshot) {
+              final isBlockedByPartner = snapshot.hasData && 
+                  snapshot.data!.snapshot.value != null && 
+                  (Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map)['blockedUsers'] as List<dynamic>?)?.contains(myUid) == true;
+              final hasIBlockedPartner = auth.userModel?.blockedUsers.contains(_partnerId) ?? false;
+              
+              if (isBlockedByPartner || hasIBlockedPartner) {
+                return Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.of(context).padding.bottom + 16),
+                  color: isDark ? Colors.black26 : Colors.grey[200],
+                  child: Column(
+                    children: [
+                      const Icon(Icons.block_rounded, color: AppColors.error, size: 32),
+                      const SizedBox(height: 8),
+                      Text(
+                        isBlockedByPartner 
+                          ? 'u is been blocked u are unblae to msg please try latter okay'
+                          : 'Please unblock first in the settings option then make conversation.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: AppColors.error, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return _buildInputArea();
+            },
+          ),
         ],
       ),
     );

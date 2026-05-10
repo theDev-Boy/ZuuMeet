@@ -255,11 +255,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
         itemCount: user.friendRequests.length,
         itemBuilder: (context, index) {
           final reqUid = user.friendRequests[index];
-          return FutureBuilder<UserModel?>(
-            future: _db.getUser(reqUid),
+          return StreamBuilder<DatabaseEvent>(
+            stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(reqUid).onValue,
             builder: (context, snapshot) {
-              if (!snapshot.hasData) return const SizedBox.shrink();
-              final reqUser = snapshot.data!;
+              if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
+                return const SizedBox.shrink();
+              }
+              final reqData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+              final reqUser = UserModel.fromJson(reqData, reqUid);
               return Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -317,11 +320,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
         itemCount: user.sentRequests.length,
         itemBuilder: (context, index) {
           final reqUid = user.sentRequests[index];
-          return FutureBuilder<UserModel?>(
-            future: _db.getUser(reqUid),
+          return StreamBuilder<DatabaseEvent>(
+            stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(reqUid).onValue,
             builder: (context, snapshot) {
-              if (!snapshot.hasData) return const SizedBox.shrink();
-              final reqUser = snapshot.data!;
+              if (!snapshot.hasData || snapshot.data?.snapshot.value == null) {
+                return const SizedBox.shrink();
+              }
+              final reqData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
+              final reqUser = UserModel.fromJson(reqData, reqUid);
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
                 elevation: 0,

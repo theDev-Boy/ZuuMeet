@@ -275,6 +275,27 @@ class CallNotificationService {
     );
   }
 
+  /// Schedule a daily engagement notification to keep users active.
+  Future<void> scheduleDailyReminder() async {
+    const androidDetails = AndroidNotificationDetails(
+      'daily_reminders',
+      'Daily Reminders',
+      channelDescription: 'Engagement notifications',
+      importance: Importance.low,
+      priority: Priority.low,
+    );
+    const notificationDetails = NotificationDetails(android: androidDetails);
+
+    await _notifications.periodicallyShow(
+      99,
+      'ZuuMeet · Ready to talk?',
+      'Make new friends or chat with someone random now!',
+      RepeatInterval.daily,
+      notificationDetails,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    );
+  }
+
   /// Dismiss the call notification.
   Future<void> dismissCallNotification() async {
     await _notifications.cancel(10);

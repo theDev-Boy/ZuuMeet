@@ -70,13 +70,6 @@ class WebRTCService {
     await roomRef.set(roomWithOffer);
     roomId = roomRef.id;
 
-    peerConnection?.onTrack = (RTCTrackEvent event) {
-      if (event.streams.isNotEmpty) {
-        onAddRemoteStream?.call(event.streams[0]);
-        remoteStream = event.streams[0];
-      }
-    };
-
     // Listen for remote answer
     roomRef.snapshots().listen((snapshot) async {
       if (!snapshot.exists) return;
@@ -126,13 +119,6 @@ class WebRTCService {
     var calleeCandidatesRef = roomRef.collection('calleeCandidates');
     peerConnection?.onIceCandidate = (RTCIceCandidate candidate) {
       calleeCandidatesRef.add(candidate.toMap());
-    };
-
-    peerConnection?.onTrack = (RTCTrackEvent event) {
-      if (event.streams.isNotEmpty) {
-        onAddRemoteStream?.call(event.streams[0]);
-        remoteStream = event.streams[0];
-      }
     };
 
     var data = roomSnapshot.data() as Map<String, dynamic>;
@@ -186,6 +172,20 @@ class WebRTCService {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         onConnectionConnected?.call();
       }
+    };
+
+    peerConnection?.onTrack = (RTCTrackEvent event) {
+      debugPrint('WebRTC: onTrack event triggered');
+      if (event.streams.isNotEmpty) {
+        onAddRemoteStream?.call(event.streams[0]);
+        remoteStream = event.streams[0];
+      }
+    };
+
+    peerConnection?.onAddStream = (MediaStream stream) {
+      debugPrint('WebRTC: onAddStream event triggered');
+      onAddRemoteStream?.call(stream);
+      remoteStream = stream;
     };
   }
 

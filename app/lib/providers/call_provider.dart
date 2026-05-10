@@ -145,15 +145,18 @@ class CallProvider extends ChangeNotifier {
             }
           });
 
-      _db.listenForMatch(currentUser.uid).listen((event) {
+      _db.listenForMatch(currentUser.uid).listen((event) async {
         if (!event.snapshot.exists || event.snapshot.value == null) return;
-        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        final data = Map<dynamic, dynamic>.from(event.snapshot.value as Map);
         final status = data['status'] as String? ?? '';
+        
         if (status == 'matched' && (_state == CallState.searching || _state == CallState.ended)) {
           final matchId = data['matchId'] as String?;
           final roomId = data['roomId'] as String?;
+          
           if (matchId != null && roomId != null) {
-            _onMatchedByPartner(matchId, roomId, currentUser);
+            debugPrint('MATCHED BY PARTNER: matchId=$matchId, roomId=$roomId');
+            await _onMatchedByPartner(matchId, roomId, currentUser);
           }
         }
       });
@@ -174,7 +177,20 @@ class CallProvider extends ChangeNotifier {
       await _webRTCService.initLocalStream(localRenderer, isVideo: _videoEnabled);
       final roomId = await _webRTCService.createRoom(myUid, partnerUid, isVideo: _videoEnabled);
       debugPrint('WebRTC Room Created: $roomId');
-      // RoomId would typically be sent to the partner via FCM or CallNotificationService here
+      
+      // Trigger notification for the partner
+      await _db.sendNotificationTrigger(
+        receiverUid: partnerUid,
+        senderName: _partnerName ?? 'Someone',
+        type: 'call',
+        data: {
+          'callId': roomId,
+          'callerName': _partnerName ?? 'Someone', // Using local partner name for demo
+          'callType': _videoEnabled ? 'video' : 'audio',
+          'matchId': roomId, // Using roomId as matchId for direct calls
+        },
+      );
+
       _state = CallState.connected;
       _startCallTimer();
       notifyListeners();
@@ -211,7 +227,12 @@ class CallProvider extends ChangeNotifier {
 
     try {
       final roomId = await _webRTCService.createRoom(myUid, partnerUid, isVideo: _videoEnabled);
+      // Update both match nodes and both user's personal match nodes for redundancy
       await _db.updateMatch(matchId, {'roomId': roomId});
+      await FirebaseDatabase.instance.ref('users').child(partnerUid).child('currentMatch').update({
+        'roomId': roomId,
+        'status': 'matched'
+      });
       
       _state = CallState.connected;
       _startCallTimer();
@@ -238,9 +259,12 @@ class CallProvider extends ChangeNotifier {
       _connectionStatus = 'Connecting...';
       notifyListeners();
 
+      // Small delay to ensure initiator has finished room creation
+      await Future.delayed(const Duration(milliseconds: 1500));
       await _webRTCService.joinRoom(roomId);
 
       _state = CallState.connected;
+      _startCallTimer();
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {

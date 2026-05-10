@@ -534,6 +534,15 @@ class DatabaseService {
         senderFriends.add(myUid);
         await senderFriendsRef.set(senderFriends);
       }
+
+      // 4. Remove from sender's sentRequests (CLEANUP FOR AUTO-REFRESH)
+      final senderSentRef = _db.ref(AppConstants.usersPath).child(senderUid).child('sentRequests');
+      final senderSentSnapshot = await senderSentRef.get();
+      if (senderSentSnapshot.exists && senderSentSnapshot.value != null) {
+        List<String> sent = (senderSentSnapshot.value as List<dynamic>).map((e) => e.toString()).toList();
+        sent.remove(myUid);
+        await senderSentRef.set(sent);
+      }
     } catch (e) {
       logger.e('Failed to accept friend request', error: e);
       rethrow;
@@ -543,12 +552,22 @@ class DatabaseService {
   /// Reject a friend request.
   Future<void> rejectFriendRequest(String myUid, String senderUid) async {
     try {
+      // 1. Remove from my incoming requests
       final myRequestsRef = _db.ref(AppConstants.usersPath).child(myUid).child('friendRequests');
       final reqSnapshot = await myRequestsRef.get();
       if (reqSnapshot.exists && reqSnapshot.value != null) {
         List<String> requests = (reqSnapshot.value as List<dynamic>).map((e) => e.toString()).toList();
         requests.remove(senderUid);
         await myRequestsRef.set(requests);
+      }
+
+      // 2. Remove from sender's sentRequests (auto-refresh for their Sent tab)
+      final senderSentRef = _db.ref(AppConstants.usersPath).child(senderUid).child('sentRequests');
+      final senderSentSnapshot = await senderSentRef.get();
+      if (senderSentSnapshot.exists && senderSentSnapshot.value != null) {
+        List<String> sent = (senderSentSnapshot.value as List<dynamic>).map((e) => e.toString()).toList();
+        sent.remove(myUid);
+        await senderSentRef.set(sent);
       }
     } catch (e) {
       logger.e('Failed to reject friend request', error: e);
@@ -660,6 +679,28 @@ class DatabaseService {
     } catch (e) {
       logger.e('Failed to search user', error: e);
       return null;
+    }
+  }
+
+  /// Send a notification trigger to the partner via a dedicated node.
+  /// Note: A backend Cloud Function should listen to this node to send real FCM.
+  Future<void> sendNotificationTrigger({
+    required String receiverUid,
+    required String senderName,
+    required String type, // 'call' or 'message'
+    required Map<String, dynamic> data,
+  }) async {
+    try {
+      final ref = _db.ref('notification_triggers').push();
+      await ref.set({
+        'receiverUid': receiverUid,
+        'senderName': senderName,
+        'type': type,
+        'data': data,
+        'timestamp': ServerValue.timestamp,
+      });
+    } catch (e) {
+      logger.e('Failed to send notification trigger', error: e);
     }
   }
 }

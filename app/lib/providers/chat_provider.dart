@@ -57,8 +57,8 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> sendMessage(String chatId, MessageModel message) async {
-    await _service.sendMessage(chatId, message);
+  Future<void> sendMessage(String chatId, MessageModel message, {String? senderName}) async {
+    await _service.sendMessage(chatId, message, senderName: senderName);
   }
 
   Future<void> markDelivered(String chatId) async {

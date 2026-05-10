@@ -131,7 +131,7 @@ class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
   @override
   void initState() {
     super.initState();
-    _tapSub = CallNotificationService().onNotificationTap.listen((payload) {
+    CallNotificationService().onNotificationTap.listen((payload) {
       if (!mounted) return;
       if (payload.startsWith('call:')) {
         final query = payload.replaceFirst('call:', '');
@@ -156,6 +156,10 @@ class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
         }
       }
     });
+
+    // Schedule the 24h engagement reminder
+    unawaited(CallNotificationService().scheduleDailyReminder());
+
     _callEventSub = CallNotificationService().onSystemCallEvent.listen((event) {
       if (!mounted || event == null) return;
       final data = _systemCalls.eventBodyToCallData(event.body);
