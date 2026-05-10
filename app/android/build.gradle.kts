@@ -21,7 +21,8 @@ subprojects {
 
 // Fix for plugins that still use deprecated package= in AndroidManifest.xml (AGP 8.11+)
 subprojects {
-    val fixNamespace = Action<Project> { proj ->
+    val proj = this
+    val fixNamespace = {
         if (proj.plugins.hasPlugin("com.android.library")) {
             val libExt = proj.extensions.findByType(com.android.build.gradle.LibraryExtension::class.java)
             if (libExt != null && (libExt.namespace == null || libExt.namespace!!.isEmpty())) {
@@ -37,10 +38,10 @@ subprojects {
         }
     }
     
-    if (project.state.executed) {
-        fixNamespace.execute(project)
+    if (proj.state.executed) {
+        fixNamespace()
     } else {
-        project.afterEvaluate(fixNamespace)
+        proj.afterEvaluate { fixNamespace() }
     }
 }
 
