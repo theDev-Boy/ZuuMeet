@@ -11,6 +11,7 @@ class MatchModel extends Equatable {
   final String initiator;
   final String? user1Name;
   final String? user2Name;
+  final String? roomId;
 
   const MatchModel({
     required this.matchId,
@@ -22,6 +23,7 @@ class MatchModel extends Equatable {
     required this.initiator,
     this.user1Name,
     this.user2Name,
+    this.roomId,
   });
 
   factory MatchModel.fromJson(Map<dynamic, dynamic> json, String matchId) {
@@ -35,6 +37,7 @@ class MatchModel extends Equatable {
       initiator: json['initiator'] as String? ?? '',
       user1Name: json['user1Name'] as String?,
       user2Name: json['user2Name'] as String?,
+      roomId: json['roomId'] as String?,
     );
   }
 
@@ -48,6 +51,7 @@ class MatchModel extends Equatable {
       'initiator': initiator,
       'user1Name': user1Name,
       'user2Name': user2Name,
+      'roomId': roomId,
     };
   }
 

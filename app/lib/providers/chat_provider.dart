@@ -1,24 +1,38 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
+
 import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/material.dart';
+
 import '../models/chat_model.dart';
 import '../models/message_model.dart';
 import '../services/chat_service.dart';
+import '../services/connectivity_service.dart';
+import '../services/database_service.dart';
 import '../services/local_db_service.dart';
 
 class ChatProvider extends ChangeNotifier {
   final ChatService _service = ChatService();
-  
+  final LocalDbService _localDb = LocalDbService();
+  final ConnectivityService _connectivity = ConnectivityService();
+  final DatabaseService _database = DatabaseService();
+
   List<ChatModel> _chats = [];
   String _myUid = '';
   final Map<String, bool> _statusUpdateInFlight = {};
-  
+  final Map<String, StreamController<List<MessageModel>>> _messageControllers =
+      {};
+  final Map<String, StreamSubscription<DatabaseEvent>> _messageSubscriptions = {};
+  final Map<String, StreamSubscription<bool>> _connectivitySubscriptions = {};
+
+  StreamSubscription<DatabaseEvent>? _chatSubscription;
+  StreamSubscription<bool>? _globalConnectivitySubscription;
+
   List<ChatModel> get chats => _chats;
 
-  /// Start listening to chats for a user.
   void init(String myUid) {
     _myUid = myUid;
-    _service.listenForUserChats(myUid).listen((event) {
+    _chatSubscription?.cancel();
+    _chatSubscription = _service.listenForUserChats(myUid).listen((event) {
       if (event.snapshot.value != null) {
         final data = event.snapshot.value as Map<dynamic, dynamic>;
         _chats = data.entries
@@ -27,38 +41,151 @@ class ChatProvider extends ChangeNotifier {
             .toList();
         _chats.sort((a, b) => b.lastMessageTime.compareTo(a.lastMessageTime));
         notifyListeners();
+      } else {
+        _chats = [];
+        notifyListeners();
+      }
+    });
+
+    _globalConnectivitySubscription?.cancel();
+    _globalConnectivitySubscription =
+        _connectivity.onStatusChanged.listen((offline) {
+      if (!offline) {
+        unawaited(_flushPendingMessages());
+      }
+      for (final chatId in _messageControllers.keys) {
+        unawaited(_emitMergedMessages(chatId));
       }
     });
   }
 
-  /// Get messages for a specific chat.
-  Stream<List<MessageModel>> getMessages(String chatId) async* {
-    final clearedAt = await LocalDbService().getChatClearedAt(chatId);
-    yield* _service.listenForMessages(chatId).map((event) {
-      if (event.snapshot.value == null) return <MessageModel>[];
-      final data = event.snapshot.value as Map<dynamic, dynamic>;
-      final msgs = data.entries
-          .map((e) => MessageModel.fromMap(e.key, e.value))
-          // Only show messages that arrived after it was cleared locally
-          .where((m) => m.timestamp.millisecondsSinceEpoch > clearedAt)
-          // Hide messages deleted locally for this user
-          .where((m) => _myUid.isNotEmpty && !m.deletedFor.contains(_myUid))
-          .toList();
-      msgs.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-      return msgs;
+  Stream<List<MessageModel>> getMessages(String chatId) {
+    if (_messageControllers.containsKey(chatId)) {
+      return _messageControllers[chatId]!.stream;
+    }
+
+    final controller = StreamController<List<MessageModel>>.broadcast(
+      onCancel: () => _disposeChatStream(chatId),
+    );
+    _messageControllers[chatId] = controller;
+
+    _messageSubscriptions[chatId] =
+        _service.listenForMessages(chatId).listen((event) async {
+      final messages = <MessageModel>[];
+      if (event.snapshot.value != null) {
+        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        messages.addAll(
+          data.entries.map((e) => MessageModel.fromMap(e.key, e.value)),
+        );
+        messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        await _localDb.cacheMessages(chatId, messages);
+      }
+      await _emitMergedMessages(chatId, remoteMessages: messages);
     });
+
+    _connectivitySubscriptions[chatId] =
+        _connectivity.onStatusChanged.listen((_) async {
+      await _emitMergedMessages(chatId);
+    });
+
+    unawaited(_emitMergedMessages(chatId));
+    return controller.stream;
   }
 
-  /// Get specific chat metadata.
+  Future<void> _emitMergedMessages(
+    String chatId, {
+    List<MessageModel>? remoteMessages,
+  }) async {
+    final controller = _messageControllers[chatId];
+    if (controller == null || controller.isClosed) {
+      return;
+    }
+
+    final clearedAt = await _localDb.getChatClearedAt(chatId);
+    final cached = remoteMessages ??
+        await _localDb.getMessages(chatId, afterTimestamp: clearedAt);
+    final pending = await _localDb.getPendingMessages(chatId: chatId);
+
+    final merged = <String, MessageModel>{};
+    for (final message in [...cached, ...pending]) {
+      if (message.timestamp.millisecondsSinceEpoch <= clearedAt) {
+        continue;
+      }
+      if (_myUid.isNotEmpty && message.deletedFor.contains(_myUid)) {
+        continue;
+      }
+      merged[message.id] = message;
+    }
+
+    final values = merged.values.toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    controller.add(values);
+  }
+
   Stream<ChatModel?> getChatMeta(String chatId) {
-    return FirebaseDatabase.instance.ref('chats_meta').child(chatId).onValue.map((event) {
-      if (event.snapshot.value == null) return null;
-      return ChatModel.fromMap(chatId, event.snapshot.value as Map);
-    });
+    return FirebaseDatabase.instance.ref('chats_meta').child(chatId).onValue.map(
+      (event) {
+        if (event.snapshot.value == null) return null;
+        return ChatModel.fromMap(chatId, event.snapshot.value as Map);
+      },
+    );
   }
 
-  Future<void> sendMessage(String chatId, MessageModel message, {String? senderName}) async {
-    await _service.sendMessage(chatId, message, senderName: senderName);
+  Future<void> sendMessage(
+    String chatId,
+    MessageModel message, {
+    String? senderName,
+  }) async {
+    final normalizedMessage = MessageModel(
+      id: message.id.isEmpty
+          ? 'local-${DateTime.now().microsecondsSinceEpoch}'
+          : message.id,
+      senderId: message.senderId,
+      text: message.text,
+      type: message.type,
+      timestamp: message.timestamp,
+      isEdited: message.isEdited,
+      deletedFor: message.deletedFor,
+      voiceBase64: message.voiceBase64,
+      voiceMimeType: message.voiceMimeType,
+      voiceDurationMs: message.voiceDurationMs,
+      voiceSizeBytes: message.voiceSizeBytes,
+      status: _connectivity.isOffline ? 'waiting' : message.status,
+      replyToMessageId: message.replyToMessageId,
+      replyToText: message.replyToText,
+      replyToSenderId: message.replyToSenderId,
+    );
+
+    if (_connectivity.isOffline) {
+      await _localDb.queuePendingMessage(chatId, normalizedMessage);
+      await _emitMergedMessages(chatId);
+      return;
+    }
+
+    await _service.sendMessage(
+      chatId,
+      normalizedMessage,
+      senderName: senderName,
+    );
+    await _localDb.deleteLocalMessage(normalizedMessage.id);
+    await _emitMergedMessages(chatId);
+  }
+
+  Future<void> _flushPendingMessages() async {
+    if (_myUid.isEmpty) {
+      return;
+    }
+    final pendingMessages = await _localDb.getPendingMessageEntries();
+    for (final entry in pendingMessages) {
+      final chatId = entry.key;
+      final message = entry.value;
+      if (chatId.isEmpty) {
+        continue;
+      }
+      await _service.sendMessage(chatId, message);
+      await _localDb.deleteLocalMessage(message.id);
+      await _emitMergedMessages(chatId);
+    }
   }
 
   Future<void> markDelivered(String chatId) async {
@@ -96,11 +223,22 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> setTyping(String chatId, String myUid, bool isTyping) async {
+    if (_connectivity.isOffline) {
+      return;
+    }
     await _service.setTypingStatus(chatId, myUid, isTyping);
   }
 
-  Future<void> deleteMessage(String chatId, String messageId, {bool everyone = false}) async {
-    final ref = FirebaseDatabase.instance.ref('chats').child(chatId).child('messages').child(messageId);
+  Future<void> deleteMessage(
+    String chatId,
+    String messageId, {
+    bool everyone = false,
+  }) async {
+    final ref = FirebaseDatabase.instance
+        .ref('chats')
+        .child(chatId)
+        .child('messages')
+        .child(messageId);
     if (everyone) {
       await ref.remove();
     } else {
@@ -109,8 +247,8 @@ class ChatProvider extends ChangeNotifier {
         List<String> current = [];
         if (snap.exists && snap.value != null) {
           current = (snap.value as Object) is List
-            ? (snap.value as List).map((e) => e.toString()).toList()
-            : [];
+              ? (snap.value as List).map((e) => e.toString()).toList()
+              : [];
         }
         if (!current.contains(_myUid)) {
           current.add(_myUid);
@@ -121,18 +259,40 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> editMessage(String chatId, String messageId, String newText) async {
-    await FirebaseDatabase.instance.ref('chats').child(chatId).child('messages').child(messageId).update({
+    await FirebaseDatabase.instance
+        .ref('chats')
+        .child(chatId)
+        .child('messages')
+        .child(messageId)
+        .update({
       'text': newText,
       'isEdited': true,
     });
   }
 
   Future<void> clearChat(String chatId) async {
-    await LocalDbService().clearChatLocally(chatId);
+    await _localDb.clearChatLocally(chatId);
+    await _emitMergedMessages(chatId);
     notifyListeners();
   }
 
   Future<void> blockUser(String myUid, String partnerId) async {
-     await FirebaseDatabase.instance.ref('users').child(myUid).child('blockedUsers').push().set(partnerId);
+    await _database.blockUser(myUid, partnerId);
+  }
+
+  void _disposeChatStream(String chatId) {
+    _messageSubscriptions.remove(chatId)?.cancel();
+    _connectivitySubscriptions.remove(chatId)?.cancel();
+    _messageControllers.remove(chatId)?.close();
+  }
+
+  @override
+  void dispose() {
+    _chatSubscription?.cancel();
+    _globalConnectivitySubscription?.cancel();
+    for (final chatId in _messageControllers.keys.toList()) {
+      _disposeChatStream(chatId);
+    }
+    super.dispose();
   }
 }

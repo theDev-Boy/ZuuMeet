@@ -6,10 +6,10 @@ import '../config/app_dimensions.dart';
 import '../config/app_typography.dart';
 import '../providers/auth_provider.dart';
 import '../providers/call_provider.dart';
+import '../services/connectivity_service.dart';
 import '../services/permission_service.dart';
 import '../widgets/custom_button.dart';
 import 'friends_screen.dart';
-import 'history_screen.dart';
 
 import 'messenger_screen.dart';
 import '../widgets/avatar_widget.dart';
@@ -22,8 +22,20 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  final ConnectivityService _connectivity = ConnectivityService();
 
   Future<void> _onStartChatting(BuildContext context) async {
+    if (!await _connectivity.hasInternet()) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No internet. Please connect before starting a call.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
     final permissionService = PermissionService();
     final hasPermissions = await permissionService.requestCameraAndMic();
 
@@ -78,7 +90,6 @@ class _HomeScreenState extends State<HomeScreen> {
           _buildHomeTab(context),
           const MessengerScreen(),
           const FriendsScreen(),
-          const HistoryScreen(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -95,7 +106,6 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.home_rounded), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.message_rounded), label: 'Messenger'),
           BottomNavigationBarItem(icon: Icon(Icons.group_rounded), label: 'Friends'),
-          BottomNavigationBarItem(icon: Icon(Icons.history_rounded), label: 'History'),
         ],
       ),
     );

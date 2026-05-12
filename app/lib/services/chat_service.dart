@@ -14,8 +14,25 @@ class ChatService {
 
   /// Send a message to a chat.
   Future<void> sendMessage(String chatId, MessageModel message, {String? senderName}) async {
-    final msgData = message.toMap();
-    await _db.child('chats').child(chatId).child('messages').push().set(msgData);
+    final msgRef = _db.child('chats').child(chatId).child('messages').push();
+    final msgData = MessageModel(
+      id: message.id.isEmpty ? (msgRef.key ?? '') : message.id,
+      senderId: message.senderId,
+      text: message.text,
+      type: message.type,
+      timestamp: message.timestamp,
+      isEdited: message.isEdited,
+      deletedFor: message.deletedFor,
+      voiceBase64: message.voiceBase64,
+      voiceMimeType: message.voiceMimeType,
+      voiceDurationMs: message.voiceDurationMs,
+      voiceSizeBytes: message.voiceSizeBytes,
+      status: message.status,
+      replyToMessageId: message.replyToMessageId,
+      replyToText: message.replyToText,
+      replyToSenderId: message.replyToSenderId,
+    ).toMap();
+    await msgRef.set(msgData);
     final participants = chatId.split('_');
     final receiverUid = participants.firstWhere((id) => id != message.senderId, orElse: () => '');
     

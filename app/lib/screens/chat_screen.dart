@@ -18,6 +18,7 @@ import '../widgets/avatar_widget.dart';
 import '../config/app_colors.dart';
 import '../config/app_typography.dart';
 import '../services/call_notification_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/database_service.dart';
 import 'package:intl/intl.dart';
 
@@ -55,6 +56,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String _partnerId = '';
   static const int _maxVoiceDurationMs = 20000;
   static const int _maxVoiceBytes = 200000;
+  final ConnectivityService _connectivity = ConnectivityService();
 
   @override
   void initState() {
@@ -267,7 +269,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _startAudioCall() async {
     if (_partner == null) return;
-    final me = context.read<AuthProvider>().userModel;
+    final auth = context.read<AuthProvider>();
+    if (!await _connectivity.hasInternet()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No internet. Please connect before calling.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+    final me = auth.userModel;
     if (me == null) return;
     final callData = await DatabaseService().createDirectCall(
       caller: me,
@@ -282,6 +296,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'callId': callData['callId'] as String,
       'matchId': callData['matchId'] as String,
       'channelName': callData['channelName'] as String,
+      'roomId': callData['roomId'] as String?,
       'partnerUid': _partnerId,
       'partnerName': _partner!.name,
       'partnerAvatar': _partner!.avatarUrl,
@@ -291,7 +306,19 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _startVideoCall() async {
     if (_partner == null) return;
-    final me = context.read<AuthProvider>().userModel;
+    final auth = context.read<AuthProvider>();
+    if (!await _connectivity.hasInternet()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No internet. Please connect before calling.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+    final me = auth.userModel;
     if (me == null) return;
     final callData = await DatabaseService().createDirectCall(
       caller: me,
@@ -306,6 +333,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'callId': callData['callId'] as String,
       'matchId': callData['matchId'] as String,
       'channelName': callData['channelName'] as String,
+      'roomId': callData['roomId'] as String?,
       'partnerUid': _partnerId,
       'partnerName': _partner!.name,
       'partnerAvatar': _partner!.avatarUrl,
@@ -497,6 +525,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 context.read<ChatProvider>().clearChat(widget.chatId);
               } else if (val == 'block') {
                 context.read<ChatProvider>().blockUser(myUid, _partnerId);
+                context.read<AuthProvider>().refreshUser();
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('User blocked'), backgroundColor: AppColors.error),
                 );
@@ -655,8 +684,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       const SizedBox(height: 8),
                       Text(
                         isBlockedByPartner 
-                          ? 'u is been blocked u are unblae to msg please try latter okay'
-                          : 'Please unblock first in the settings option then make conversation.',
+                          ? 'You have been blocked by this user.'
+                          : 'Please unblock this user to continue chatting.',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: AppColors.error, fontWeight: FontWeight.w600),
                       ),
@@ -820,6 +849,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   style: TextStyle(color: isMe ? Colors.white : (isDark ? Colors.white : Colors.black87)),
                 ),
                 if (isMe) ...[
+                  if (msg.status == 'waiting')
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Text(
+                        'Waiting for internet',
+                        style: TextStyle(fontSize: 10, color: Colors.white70),
+                      ),
+                    ),
                   const SizedBox(width: 6),
                   _buildStatusIcon(msg.status, isMe: isMe),
                 ],
@@ -895,6 +932,19 @@ class _ChatScreenState extends State<ChatScreen> {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (isMe && msg.status == 'waiting')
+                            Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Text(
+                                'Waiting for internet',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: isMe
+                                      ? Colors.white70
+                                      : AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
                           if (msg.isEdited)
                             Padding(
                               padding: const EdgeInsets.only(right: 4),
@@ -1159,6 +1209,15 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildStatusIcon(String status, {required bool isMe}) {
     final color = isMe ? Colors.white60 : AppColors.textSecondary;
     switch (status) {
+      case 'waiting':
+        return const SizedBox(
+          width: 12,
+          height: 12,
+          child: CircularProgressIndicator(
+            strokeWidth: 1.5,
+            color: Colors.white70,
+          ),
+        );
       case 'seen':
         return const Icon(Icons.done_all_rounded, size: 14, color: Colors.lightBlueAccent);
       case 'delivered':

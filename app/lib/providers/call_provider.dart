@@ -9,10 +9,6 @@ import '../services/database_service.dart';
 import '../services/webrtc_service.dart';
 import '../utils/constants.dart';
 
-import 'package:logger/logger.dart';
-
-final logger = Logger();
-
 enum CallState { idle, searching, connecting, connected, ended, error }
 
 class CallProvider extends ChangeNotifier {
@@ -201,6 +197,38 @@ class CallProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> startOutgoingMatchCall({
+    required String matchId,
+    required String myUid,
+    required String partnerUid,
+    required bool isVideo,
+  }) async {
+    _videoEnabled = isVideo;
+    _state = CallState.connecting;
+    _connectionStatus = 'Calling...';
+    notifyListeners();
+
+    try {
+      await _webRTCService.initLocalStream(localRenderer, isVideo: isVideo);
+      _currentMatch = await _db.getMatch(matchId);
+      final roomId = await _webRTCService.createRoom(
+        myUid,
+        partnerUid,
+        isVideo: isVideo,
+      );
+      await _db.updateMatch(matchId, {
+        'roomId': roomId,
+        'status': 'ringing',
+      });
+      _listenForMatchEnd(matchId);
+      notifyListeners();
+    } catch (e) {
+      _error = 'Direct call failed.';
+      _state = CallState.error;
+      notifyListeners();
+    }
+  }
+
   Future<void> answerDirectCall(String roomId, {bool isVideo = true}) async {
     _videoEnabled = isVideo;
     _state = CallState.connecting;
@@ -220,6 +248,34 @@ class CallProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> answerMatchCall({
+    required String myUid,
+    required String matchId,
+    required String roomId,
+    required bool isVideo,
+  }) async {
+    _videoEnabled = isVideo;
+    _state = CallState.connecting;
+    _connectionStatus = 'Connecting...';
+    notifyListeners();
+
+    try {
+      await _webRTCService.initLocalStream(localRenderer, isVideo: isVideo);
+      _currentMatch = await _db.getMatch(matchId);
+      await _webRTCService.joinRoom(roomId);
+      await _db.acceptDirectCall(myUid: myUid, matchId: matchId);
+      _state = CallState.connected;
+      _startCallTimer();
+      _listenForMatchEnd(matchId);
+      notifyListeners();
+    } catch (e) {
+      _error = 'Failed to answer call.';
+      _state = CallState.error;
+      notifyListeners();
+    }
+  }
+
+
   Future<void> _startCallAsInitiator(String matchId, String myUid, String partnerUid) async {
     _state = CallState.connecting;
     _connectionStatus = 'Connecting...';
@@ -227,11 +283,14 @@ class CallProvider extends ChangeNotifier {
 
     try {
       final roomId = await _webRTCService.createRoom(myUid, partnerUid, isVideo: _videoEnabled);
-      // Update both match nodes and both user's personal match nodes for redundancy
       await _db.updateMatch(matchId, {'roomId': roomId});
-      await FirebaseDatabase.instance.ref('users').child(partnerUid).child('currentMatch').update({
+      await FirebaseDatabase.instance
+          .ref(AppConstants.activeUsersPath)
+          .child(partnerUid)
+          .update({
         'roomId': roomId,
-        'status': 'matched'
+        'status': 'matched',
+        'matchId': matchId,
       });
       
       _state = CallState.connected;
@@ -285,11 +344,6 @@ class CallProvider extends ChangeNotifier {
   }
 
   void _onPartnerEndedCall({String? currentUserUid}) async {
-    // Save to history before clearing
-    if (_currentMatch != null && _callDurationSeconds > 0 && currentUserUid != null) {
-      _saveCallToHistory(currentUserUid);
-    }
-
     _stopCallTimer();
     _cancelSubscriptions();
     await _webRTCService.hangUp(localRenderer);
@@ -310,35 +364,7 @@ class CallProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> _saveCallToHistory(String myUid) async {
-    if (_currentMatch == null || _partnerName == null) return;
-    try {
-      final historyRef = FirebaseDatabase.instance
-          .ref('call_history')
-          .child(myUid)
-          .push();
-      
-      await historyRef.set({
-        'id': historyRef.key,
-        'partnerUid': _currentMatch!.user1 == myUid ? _currentMatch!.user2 : _currentMatch!.user1,
-        'partnerName': _partnerName,
-        'timestamp': ServerValue.timestamp,
-        'durationSeconds': _callDurationSeconds,
-        'type': _videoEnabled ? 'video' : 'audio',
-        'status': 'connected',
-      });
-      logger.i('Call history saved for $myUid');
-    } catch (e) {
-      logger.w('Failed to save call history: $e');
-    }
-  }
-
   Future<void> endCall(String myUid) async {
-    // Save to history before ending
-    if (_currentMatch != null && _callDurationSeconds > 0) {
-      await _saveCallToHistory(myUid);
-    }
-    
     _stopCallTimer();
     _cancelSubscriptions();
     if (_currentMatch != null) {

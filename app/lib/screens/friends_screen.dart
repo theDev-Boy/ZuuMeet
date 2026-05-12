@@ -4,6 +4,7 @@ import '../config/app_colors.dart';
 import '../config/app_typography.dart';
 import '../models/user_model.dart';
 import '../providers/auth_provider.dart';
+import '../services/connectivity_service.dart';
 import '../services/database_service.dart';
 import 'package:firebase_database/firebase_database.dart';
 import '../utils/constants.dart';
@@ -19,6 +20,7 @@ class FriendsScreen extends StatefulWidget {
 
 class _FriendsScreenState extends State<FriendsScreen> {
   final DatabaseService _db = DatabaseService();
+  final ConnectivityService _connectivity = ConnectivityService();
 
   void _showProfileInfo(UserModel friend) {
     showModalBottomSheet(
@@ -77,15 +79,39 @@ class _FriendsScreenState extends State<FriendsScreen> {
   }
 
   void _startDirectCall(String partnerUid) async {
-    final myUid = context.read<AuthProvider>().firebaseUser!.uid;
-    try {
-      await FirebaseDatabase.instance.ref('direct_calls').child(partnerUid).set({
-        'callerId': myUid,
-        'callerName': context.read<AuthProvider>().userModel!.name,
-        'timestamp': ServerValue.timestamp,
-      });
+    final auth = context.read<AuthProvider>();
+    if (!await _connectivity.hasInternet()) {
       if (mounted) {
-         context.push('/call');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No internet. Please connect before calling.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+      return;
+    }
+    final me = auth.userModel;
+    final partner = await _db.getUser(partnerUid);
+    if (me == null || partner == null) {
+      return;
+    }
+    try {
+      final callData = await _db.createDirectCall(
+        caller: me,
+        calleeUid: partnerUid,
+        calleeName: partner.name,
+        calleeAvatar: partner.avatarUrl,
+        isVideo: true,
+      );
+      if (mounted) {
+        context.push('/video-call', extra: {
+          'matchId': callData['matchId'],
+          'partnerUid': partnerUid,
+          'partnerName': partner.name,
+          'partnerAvatar': partner.avatarUrl,
+          'isOutgoing': true,
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -111,6 +137,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
   Widget build(BuildContext context) {
     final authUser = context.watch<AuthProvider>().firebaseUser;
     if (authUser == null) return const SizedBox.shrink();
+    if (_connectivity.isOffline) {
+      return const Center(
+        child: Text(
+          'You do not have internet.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+      );
+    }
 
     return StreamBuilder<DatabaseEvent>(
       stream: FirebaseDatabase.instance.ref(AppConstants.usersPath).child(authUser.uid).onValue,
@@ -228,6 +262,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
                     } else if (val == 'block') {
                       _db.blockUser(user.uid, friend.uid);
                       _db.removeFriend(user.uid, friend.uid);
+                      context.read<AuthProvider>().refreshUser();
                     }
                   },
                   itemBuilder: (context) => const [
@@ -373,7 +408,7 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
 
   void _onSearch() async {
     final query = _searchCtrl.text.trim();
-    if (query.length < 6) {
+    if (query.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a valid ZuuID or UID')),
       );
@@ -439,7 +474,7 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
           ),
           const SizedBox(height: 12),
           Text(
-            'Enter the 6-digit numeric UID of your friend to connect.',
+            'Search by Zuu ID, Firebase UID, or name.',
             style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 24),
@@ -450,11 +485,8 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
               Expanded(
                 child: TextField(
                   controller: _searchCtrl,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
                   decoration: InputDecoration(
-                    hintText: 'e.g. 123456',
-                    counterText: '',
+                    hintText: 'e.g. zu-ab12cd or friend name',
                     prefixIcon: const Icon(Icons.tag_rounded),
                     filled: true,
                     fillColor: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey[100],

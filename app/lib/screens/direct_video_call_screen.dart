@@ -10,6 +10,7 @@ class DirectVideoCallScreen extends StatefulWidget {
   final String partnerName;
   final bool isOutgoing;
   final String? roomId;
+  final String? matchId;
 
   const DirectVideoCallScreen({
     super.key,
@@ -17,6 +18,7 @@ class DirectVideoCallScreen extends StatefulWidget {
     required this.partnerName,
     this.isOutgoing = true,
     this.roomId,
+    this.matchId,
   });
 
   @override
@@ -34,10 +36,20 @@ class _DirectVideoCallScreenState extends State<DirectVideoCallScreen> {
       final call = context.read<CallProvider>();
       final auth = context.read<AuthProvider>();
 
-      if (widget.isOutgoing) {
-        call.startDirectCall(auth.firebaseUser!.uid, widget.partnerUid, isVideo: true);
-      } else if (widget.roomId != null) {
-        call.answerDirectCall(widget.roomId!, isVideo: true);
+      if (widget.isOutgoing && widget.matchId != null) {
+        call.startOutgoingMatchCall(
+          matchId: widget.matchId!,
+          myUid: auth.firebaseUser!.uid,
+          partnerUid: widget.partnerUid,
+          isVideo: true,
+        );
+      } else if (widget.roomId != null && widget.matchId != null) {
+        call.answerMatchCall(
+          myUid: auth.firebaseUser!.uid,
+          matchId: widget.matchId!,
+          roomId: widget.roomId!,
+          isVideo: true,
+        );
       }
       _initialized = true;
     }

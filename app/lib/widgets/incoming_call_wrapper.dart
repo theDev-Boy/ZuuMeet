@@ -143,10 +143,20 @@ class _IncomingCallWrapperState extends State<IncomingCallWrapper>
       final callType = callData['callType'] as String? ?? 'video';
       final matchId = callData['matchId'] as String? ?? '';
       final channelName = callData['channelName'] as String? ?? matchId;
+      String? roomId;
       if (matchId.isNotEmpty) {
-        await DatabaseService().acceptDirectCall(myUid: myUid, matchId: matchId);
-      } else {
+        for (int attempt = 0; attempt < 10; attempt++) {
+          final match = await DatabaseService().getMatch(matchId);
+          roomId = match?.roomId;
+          if (roomId != null && roomId.isNotEmpty) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        }
+      }
+      if (matchId.isEmpty || roomId == null || roomId.isEmpty) {
         await FirebaseDatabase.instance.ref('direct_calls').child(myUid).remove();
+        throw Exception('Missing room id');
       }
 
       if (mounted) {
@@ -157,6 +167,7 @@ class _IncomingCallWrapperState extends State<IncomingCallWrapper>
               'callId': callData['callId'] as String? ?? matchId,
               'matchId': matchId,
               'channelName': channelName,
+              'roomId': roomId,
               'partnerUid': callerId,
               'partnerName': callerName,
               'partnerAvatar': callData['callerAvatar'] as String? ?? '',
@@ -170,6 +181,7 @@ class _IncomingCallWrapperState extends State<IncomingCallWrapper>
               'callId': callData['callId'] as String? ?? matchId,
               'matchId': matchId,
               'channelName': channelName,
+              'roomId': roomId,
               'partnerUid': callerId,
               'partnerName': callerName,
               'partnerAvatar': callData['callerAvatar'] as String? ?? '',

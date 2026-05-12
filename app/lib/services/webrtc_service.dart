@@ -74,7 +74,8 @@ class WebRTCService {
     roomRef.snapshots().listen((snapshot) async {
       if (!snapshot.exists) return;
       var data = snapshot.data() as Map<String, dynamic>;
-      if (peerConnection?.getRemoteDescription() != null && data['answer'] != null) {
+      if (peerConnection?.getRemoteDescription() == null &&
+          data['answer'] != null) {
         var answer = RTCSessionDescription(
           data['answer']['sdp'],
           data['answer']['type'],
@@ -104,6 +105,7 @@ class WebRTCService {
 
   /// Join a room (Callee)
   Future<void> joinRoom(String roomId) async {
+    this.roomId = roomId;
     var roomRef = db.collection('calls').doc(roomId);
     var roomSnapshot = await roomRef.get();
 

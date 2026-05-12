@@ -8,9 +8,11 @@ import '../providers/chat_provider.dart';
 import '../widgets/avatar_widget.dart';
 import '../config/app_colors.dart';
 import '../config/app_typography.dart';
+import '../models/chat_model.dart';
 import '../models/user_model.dart';
 import '../services/database_service.dart';
 import '../services/chat_service.dart';
+import '../services/connectivity_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 
@@ -25,6 +27,7 @@ class _MessengerScreenState extends State<MessengerScreen> {
   // Cache partner names so we don't re-fetch every build
   final Map<String, UserModel> _userCache = {};
   final DatabaseService _db = DatabaseService();
+  final ConnectivityService _connectivity = ConnectivityService();
 
   @override
   void initState() {
@@ -59,14 +62,30 @@ class _MessengerScreenState extends State<MessengerScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.search_rounded),
-            onPressed: () {},
+            onPressed: () {
+              showSearch(
+                context: context,
+                delegate: _MessengerSearchDelegate(
+                  chats: chatProvider.chats,
+                  myUid: myUid,
+                  getUser: _getUser,
+                ),
+              );
+            },
           ),
         ],
       ),
       body: RefreshIndicator(
         onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
         color: AppColors.primary,
-        child: chatProvider.chats.isEmpty
+        child: _connectivity.isOffline && chatProvider.chats.isEmpty
+            ? const Center(
+                child: Text(
+                  'You do not have internet.',
+                  style: TextStyle(color: AppColors.textSecondary),
+                ),
+              )
+            : chatProvider.chats.isEmpty
             ? _buildEmptyState()
             : ListView.separated(
                 itemCount: chatProvider.chats.length,
@@ -383,6 +402,77 @@ class _MessengerScreenState extends State<MessengerScreen> {
               ),
             ],
           ),
+        );
+      },
+    );
+  }
+}
+
+class _MessengerSearchDelegate extends SearchDelegate<String> {
+  _MessengerSearchDelegate({
+    required this.chats,
+    required this.myUid,
+    required this.getUser,
+  });
+
+  final List<ChatModel> chats;
+  final String myUid;
+  final Future<UserModel?> Function(String uid) getUser;
+
+  @override
+  List<Widget>? buildActions(BuildContext context) {
+    return [
+      IconButton(
+        onPressed: () => query = '',
+        icon: const Icon(Icons.close),
+      ),
+    ];
+  }
+
+  @override
+  Widget? buildLeading(BuildContext context) {
+    return IconButton(
+      onPressed: () => close(context, ''),
+      icon: const Icon(Icons.arrow_back),
+    );
+  }
+
+  @override
+  Widget buildResults(BuildContext context) => _buildList(context);
+
+  @override
+  Widget buildSuggestions(BuildContext context) => _buildList(context);
+
+  Widget _buildList(BuildContext context) {
+    final filtered = chats.where((chat) {
+      return chat.lastMessage.toLowerCase().contains(query.toLowerCase()) ||
+          chat.chatId.toLowerCase().contains(query.toLowerCase());
+    }).toList();
+    if (filtered.isEmpty) {
+      return const Center(child: Text('No chats found.'));
+    }
+    return ListView.builder(
+      itemCount: filtered.length,
+      itemBuilder: (context, index) {
+        final ChatModel chat = filtered[index];
+        final partnerId = chat.participants.firstWhere(
+          (id) => id != myUid,
+          orElse: () => '',
+        );
+        return FutureBuilder<UserModel?>(
+          future: getUser(partnerId),
+          builder: (context, snapshot) {
+            final partner = snapshot.data;
+            final title = partner?.name ?? partnerId;
+            return ListTile(
+              title: Text(title),
+              subtitle: Text(chat.lastMessage),
+              onTap: () {
+                close(context, chat.chatId);
+                context.push('/chat/${chat.chatId}');
+              },
+            );
+          },
         );
       },
     );

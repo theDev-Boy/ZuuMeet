@@ -21,7 +21,8 @@ class UserModel extends Equatable {
   final String avatarUrl;
   final String frameId;
   final bool isVip;
-  final String displayId; // 6-digit numeric ID
+  final String displayId;
+  final List<int> profileEditTimestamps;
 
   const UserModel({
     required this.uid,
@@ -44,6 +45,7 @@ class UserModel extends Equatable {
     this.frameId = 'free_border',
     this.isVip = false,
     this.displayId = '',
+    this.profileEditTimestamps = const [],
   });
 
   factory UserModel.fromJson(Map<dynamic, dynamic> json, String uid) {
@@ -80,6 +82,10 @@ class UserModel extends Equatable {
       frameId: json['frameId'] as String? ?? 'free_border',
       isVip: json['isVip'] as bool? ?? false,
       displayId: json['displayId'] as String? ?? '',
+      profileEditTimestamps: (json['profileEditTimestamps'] as List<dynamic>?)
+              ?.map((e) => (e as num).toInt())
+              .toList() ??
+          [],
     );
   }
 
@@ -105,6 +111,7 @@ class UserModel extends Equatable {
       'frameId': frameId,
       'isVip': isVip,
       'displayId': displayId,
+      'profileEditTimestamps': profileEditTimestamps,
     };
   }
 
@@ -127,6 +134,7 @@ class UserModel extends Equatable {
     String? frameId,
     bool? isVip,
     String? displayId,
+    List<int>? profileEditTimestamps,
   }) {
     return UserModel(
       uid: uid,
@@ -149,6 +157,8 @@ class UserModel extends Equatable {
       frameId: frameId ?? this.frameId,
       isVip: isVip ?? this.isVip,
       displayId: displayId ?? this.displayId,
+      profileEditTimestamps:
+          profileEditTimestamps ?? this.profileEditTimestamps,
     );
   }
 

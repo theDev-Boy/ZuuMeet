@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:firebase_database/firebase_database.dart';
 import '../models/user_model.dart';
 import '../models/match_model.dart';
@@ -10,6 +11,14 @@ import '../utils/logger.dart';
 /// Firebase serves as the complete backend – no separate server needed.
 class DatabaseService {
   final FirebaseDatabase _db = FirebaseDatabase.instance;
+
+  String _createDisplayId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final random = Random.secure();
+    final suffix =
+        List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
+    return 'zu-$suffix';
+  }
 
   // ---------------------------------------------------------------------------
   // USER OPERATIONS
@@ -54,6 +63,20 @@ class DatabaseService {
     }
   }
 
+  Future<String> generateUniqueDisplayId() async {
+    while (true) {
+      final candidate = _createDisplayId();
+      final snapshot = await _db
+          .ref(AppConstants.usersPath)
+          .orderByChild('displayId')
+          .equalTo(candidate)
+          .get();
+      if (!snapshot.exists || snapshot.value == null) {
+        return candidate;
+      }
+    }
+  }
+
   /// Set user online/offline status and update lastActive.
   Future<void> setOnlineStatus(String uid, bool isOnline) async {
     await updateUser(uid, {
@@ -94,6 +117,7 @@ class DatabaseService {
         'age': user.age,
         'country': user.countryCode,
         'name': user.name,
+        'blockedUsers': user.blockedUsers,
         'joinedAt': ServerValue.timestamp,
       });
       await updateUser(user.uid, {'isSearching': true});
@@ -425,6 +449,9 @@ class DatabaseService {
         blocked.add(blockedUid);
         await userRef.set(blocked);
       }
+      await removeFriend(myUid, blockedUid);
+      await rejectFriendRequest(myUid, blockedUid);
+      await rejectFriendRequest(blockedUid, myUid);
     } catch (e) {
       logger.e('Failed to block user', error: e);
       rethrow;
@@ -461,6 +488,15 @@ class DatabaseService {
     } catch (e) {
       return false;
     }
+  }
+
+  Future<Map<String, bool>> getBlockState(String myUid, String partnerUid) async {
+    final myUser = await getUser(myUid);
+    final partner = await getUser(partnerUid);
+    return {
+      'iBlocked': myUser?.blockedUsers.contains(partnerUid) ?? false,
+      'blockedByPartner': partner?.blockedUsers.contains(myUid) ?? false,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -602,39 +638,6 @@ class DatabaseService {
   }
 
   // ---------------------------------------------------------------------------
-  // CALL HISTORY
-  // ---------------------------------------------------------------------------
-
-  /// Get call history for a user.
-  Future<List<MatchModel>> getCallHistory(String uid) async {
-    try {
-      final snapshot = await _db
-          .ref(AppConstants.matchesPath)
-          .orderByChild('status')
-          .equalTo('ended')
-          .get();
-      if (!snapshot.exists || snapshot.value == null) return [];
-
-      final matches = snapshot.value as Map<dynamic, dynamic>;
-      final history = <MatchModel>[];
-
-      for (final entry in matches.entries) {
-        final data = entry.value as Map<dynamic, dynamic>;
-        if (data['user1'] == uid || data['user2'] == uid) {
-          history.add(MatchModel.fromJson(data, entry.key as String));
-        }
-      }
-
-      // Sort by startedAt descending
-      history.sort((a, b) => b.startedAt.compareTo(a.startedAt));
-      return history;
-    } catch (e) {
-      logger.e('Failed to get call history', error: e);
-      return [];
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // GLOBAL USER DISCOVERY
   // ---------------------------------------------------------------------------
 
@@ -654,18 +657,16 @@ class DatabaseService {
     }
   }
 
-  /// Find a user by their unique 6-digit displayId or full UID.
   Future<UserModel?> searchUser(String query) async {
     try {
-      // 1. Try searching by full UID first
-      final userByUid = await getUser(query);
+      final normalized = query.trim().toLowerCase();
+      final userByUid = await getUser(query.trim());
       if (userByUid != null) return userByUid;
 
-      // 2. Try searching by 6-digit displayId
       final snapshot = await _db
           .ref(AppConstants.usersPath)
           .orderByChild('displayId')
-          .equalTo(query)
+          .equalTo(query.trim())
           .get();
 
       if (snapshot.exists && snapshot.value != null) {
@@ -673,6 +674,13 @@ class DatabaseService {
         if (data.isNotEmpty) {
           final entry = data.entries.first;
           return UserModel.fromJson(entry.value as Map<dynamic, dynamic>, entry.key as String);
+        }
+      }
+
+      final users = await getAllUsers();
+      for (final user in users) {
+        if (user.name.toLowerCase().contains(normalized)) {
+          return user;
         }
       }
       return null;

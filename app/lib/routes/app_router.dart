@@ -6,13 +6,13 @@ import '../screens/splash_screen.dart';
 import '../screens/auth_screen.dart';
 import '../screens/home_screen.dart';
 import '../screens/call_screen.dart';
-import '../screens/history_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/chat_screen.dart';
 import '../screens/audio_call_screen.dart';
 import '../screens/direct_video_call_screen.dart';
 import '../screens/friends_screen.dart';
 import '../screens/blocked_users_screen.dart';
+import '../screens/edit_profile_screen.dart';
 
 /// App-wide route configuration using GoRouter.
 class AppRouter {
@@ -43,14 +43,14 @@ class AppRouter {
           builder: (context, state) => const CallScreen(),
         ),
         GoRoute(
-          path: '/history',
-          name: 'history',
-          builder: (context, state) => const HistoryScreen(),
-        ),
-        GoRoute(
           path: '/settings',
           name: 'settings',
           builder: (context, state) => const SettingsScreen(),
+        ),
+        GoRoute(
+          path: '/edit-profile',
+          name: 'edit-profile',
+          builder: (context, state) => const EditProfileScreen(),
         ),
         GoRoute(
           path: '/blocked-users',
@@ -75,6 +75,7 @@ class AppRouter {
               partnerUid: extra['partnerUid'] as String,
               partnerName: extra['partnerName'] as String,
               roomId: extra['roomId'] as String?,
+              matchId: extra['matchId'] as String?,
               isOutgoing: extra['isOutgoing'] as bool? ?? true,
             );
           },
@@ -88,6 +89,7 @@ class AppRouter {
               partnerUid: extra['partnerUid'] as String,
               partnerName: extra['partnerName'] as String,
               roomId: extra['roomId'] as String?,
+              matchId: extra['matchId'] as String?,
               isOutgoing: extra['isOutgoing'] as bool? ?? true,
             );
           },

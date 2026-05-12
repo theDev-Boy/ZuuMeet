@@ -42,6 +42,7 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 
     if (confirm == true) {
       await _db.unblockUser(auth.firebaseUser!.uid, blockedUid);
+      await auth.refreshUser();
       // Refresh user profile
       await auth.refreshUser();
       if (mounted) {

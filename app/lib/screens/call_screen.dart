@@ -205,6 +205,7 @@ class _CallScreenState extends State<CallScreen> {
           }
         } else if (value == 'block') {
           await DatabaseService().blockUser(auth.firebaseUser!.uid, partnerUid);
+          await auth.refreshUser();
           await call.stopCompletely(auth.firebaseUser!.uid);
           if (context.mounted) context.go('/home');
         }

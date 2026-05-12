@@ -4,6 +4,7 @@ import 'dart:math';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/call_notification_service.dart';
+import '../services/connectivity_service.dart';
 import '../services/database_service.dart';
 import '../utils/logger.dart';
 
@@ -11,6 +12,7 @@ import '../utils/logger.dart';
 class AuthProvider extends ChangeNotifier {
   final AuthService _authService = AuthService();
   final DatabaseService _databaseService = DatabaseService();
+  final ConnectivityService _connectivity = ConnectivityService();
 
   User? _firebaseUser;
   UserModel? _userModel;
@@ -30,6 +32,15 @@ class AuthProvider extends ChangeNotifier {
       _userModel!.name.isNotEmpty && 
       _userModel!.age.isNotEmpty && 
       _userModel!.displayId.isNotEmpty;
+  bool get isOffline => _connectivity.isOffline;
+
+  static String _generateDisplayId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final random = Random.secure();
+    final suffix =
+        List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
+    return 'zu-$suffix';
+  }
 
   AuthProvider() {
     _init();
@@ -55,7 +66,7 @@ class AuthProvider extends ChangeNotifier {
     
     // Legacy support: if user has no displayId, generate and save it now
     if (_userModel != null && _userModel!.displayId.isEmpty) {
-      final newDisplayId = (Random().nextInt(900000) + 100000).toString();
+      final newDisplayId = _generateDisplayId();
       await _databaseService.updateUser(uid, {'displayId': newDisplayId});
       _userModel = _userModel!.copyWith(displayId: newDisplayId);
       logger.i('Generated legacy UID for user $uid: $newDisplayId');
@@ -91,6 +102,11 @@ class AuthProvider extends ChangeNotifier {
     required String age,
     required String gender,
   }) async {
+    if (!await _connectivity.hasInternet()) {
+      _error = 'You need internet to create an account.';
+      notifyListeners();
+      return false;
+    }
     _setLoading(true);
     _error = null;
     try {
@@ -102,7 +118,7 @@ class AuthProvider extends ChangeNotifier {
         await _authService.updateDisplayName(name);
 
         final now = DateTime.now().millisecondsSinceEpoch;
-        final displayId = (Random().nextInt(900000) + 100000).toString(); // 100000 to 999999
+        final displayId = _generateDisplayId();
 
         final newUser = UserModel(
           uid: user.uid,
@@ -143,6 +159,11 @@ class AuthProvider extends ChangeNotifier {
     required String email,
     required String password,
   }) async {
+    if (!await _connectivity.hasInternet()) {
+      _error = 'You need internet to sign in.';
+      notifyListeners();
+      return false;
+    }
     _setLoading(true);
     _error = null;
     try {
@@ -176,6 +197,11 @@ class AuthProvider extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<bool> signInWithGoogle() async {
+    if (!await _connectivity.hasInternet()) {
+      _error = 'You need internet to sign in.';
+      notifyListeners();
+      return false;
+    }
     _setLoading(true);
     _error = null;
     try {
@@ -187,7 +213,7 @@ class AuthProvider extends ChangeNotifier {
         if (existing == null) {
           // New Google user
           final now = DateTime.now().millisecondsSinceEpoch;
-          final displayId = (Random().nextInt(900000) + 100000).toString();
+          final displayId = _generateDisplayId();
 
           final newUser = UserModel(
             uid: user.uid,
@@ -223,6 +249,11 @@ class AuthProvider extends ChangeNotifier {
   // ---------------------------------------------------------------------------
 
   Future<bool> sendPasswordReset(String email) async {
+    if (!await _connectivity.hasInternet()) {
+      _error = 'You need internet to reset your password.';
+      notifyListeners();
+      return false;
+    }
     _setLoading(true);
     _error = null;
     try {
@@ -246,34 +277,34 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> updateProfile({
     String? name,
-    String? gender,
     String? age,
-    String? country,
-    String? countryCode,
-    String? avatarUrl,
   }) async {
     if (_firebaseUser == null || _userModel == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final recentEdits = _userModel!.profileEditTimestamps
+        .where((value) => now - value < const Duration(days: 7).inMilliseconds)
+        .toList();
+    if (recentEdits.length >= 2) {
+      _error = 'You can edit your profile only twice in 7 days.';
+      notifyListeners();
+      return;
+    }
     _setLoading(true);
     try {
       final Map<String, dynamic> updates = {};
       if (name != null) updates['name'] = name;
-      if (gender != null) updates['gender'] = gender;
       if (age != null) updates['age'] = age;
-      if (country != null) updates['country'] = country;
-      if (countryCode != null) updates['countryCode'] = countryCode;
-      if (avatarUrl != null) updates['avatarUrl'] = avatarUrl;
+      updates['profileEditTimestamps'] = [...recentEdits, now];
 
       await _databaseService.updateUser(_firebaseUser!.uid, updates);
       
       _userModel = _userModel!.copyWith(
         name: name,
-        gender: gender,
         age: age,
-        country: country,
-        countryCode: countryCode,
-        avatarUrl: avatarUrl,
+        profileEditTimestamps: [...recentEdits, now],
       );
       _isNewUser = false;
+      _error = null;
     } catch (e) {
       logger.e('Failed to update profile', error: e);
     }
@@ -284,7 +315,12 @@ class AuthProvider extends ChangeNotifier {
   // SIGN OUT
   // ---------------------------------------------------------------------------
 
-  Future<void> signOut() async {
+  Future<bool> signOut() async {
+    if (!await _connectivity.hasInternet()) {
+      _error = 'You are not able to log out without internet.';
+      notifyListeners();
+      return false;
+    }
     if (_firebaseUser != null) {
       await _databaseService.setOnlineStatus(_firebaseUser!.uid, false);
       await _databaseService.leaveSearchQueue(_firebaseUser!.uid);
@@ -294,5 +330,6 @@ class AuthProvider extends ChangeNotifier {
     _userModel = null;
     _isNewUser = false;
     notifyListeners();
+    return true;
   }
 }
