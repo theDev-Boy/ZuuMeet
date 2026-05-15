@@ -43,6 +43,7 @@ class CallNotificationService {
   final StreamController<String> _tapController = StreamController<String>.broadcast();
   Stream<String> get onNotificationTap => _tapController.stream;
   SystemCallService get _systemCalls => SystemCallService();
+  StreamSubscription<DatabaseEvent>? _triggerSubscription;
 
   Future<void> init() async {
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -160,6 +161,62 @@ class CallNotificationService {
       await FirebaseDatabase.instance.ref('users').child(uid).update({
         'fcmToken': newToken,
       });
+    });
+    await _listenForRealtimeTriggers(uid);
+  }
+
+  Future<void> _listenForRealtimeTriggers(String uid) async {
+    await _triggerSubscription?.cancel();
+    _triggerSubscription = FirebaseDatabase.instance
+        .ref('notification_triggers')
+        .orderByChild('receiverUid')
+        .equalTo(uid)
+        .onValue
+        .listen((event) async {
+      if (!event.snapshot.exists || event.snapshot.value == null) {
+        return;
+      }
+      final value = event.snapshot.value;
+      if (value is! Map) {
+        return;
+      }
+      final entries = Map<dynamic, dynamic>.from(value);
+      for (final entry in entries.entries) {
+        final key = entry.key.toString();
+        final data = Map<dynamic, dynamic>.from(entry.value as Map);
+        final type = data['type']?.toString() ?? '';
+        if (type == 'message') {
+          final nested = data['data'] is Map
+              ? Map<dynamic, dynamic>.from(data['data'] as Map)
+              : <dynamic, dynamic>{};
+          await showMessageNotification(
+            title: data['senderName']?.toString() ?? 'New message',
+            body: nested['body']?.toString() ?? 'Open chat',
+            chatId: nested['chatId']?.toString() ?? '',
+          );
+        } else if (type == 'friend_request') {
+          await _notifications.show(
+            13,
+            'Friend request',
+            '${data['senderName'] ?? 'Someone'} sent you a friend request',
+            const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'messages_channel',
+                'Messages',
+                channelDescription: 'Message notifications',
+                importance: Importance.high,
+                priority: Priority.high,
+              ),
+              iOS: DarwinNotificationDetails(
+                presentSound: true,
+                presentBadge: true,
+                presentAlert: true,
+              ),
+            ),
+          );
+        }
+        await FirebaseDatabase.instance.ref('notification_triggers').child(key).remove();
+      }
     });
   }
 

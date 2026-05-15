@@ -1,6 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'dart:math';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/call_notification_service.dart';
@@ -34,14 +33,6 @@ class AuthProvider extends ChangeNotifier {
       _userModel!.displayId.isNotEmpty;
   bool get isOffline => _connectivity.isOffline;
 
-  static String _generateDisplayId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final random = Random.secure();
-    final suffix =
-        List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
-    return 'zu-$suffix';
-  }
-
   AuthProvider() {
     _init();
   }
@@ -66,7 +57,7 @@ class AuthProvider extends ChangeNotifier {
     
     // Legacy support: if user has no displayId, generate and save it now
     if (_userModel != null && _userModel!.displayId.isEmpty) {
-      final newDisplayId = _generateDisplayId();
+      final newDisplayId = await _databaseService.generateUniqueDisplayId();
       await _databaseService.updateUser(uid, {'displayId': newDisplayId});
       _userModel = _userModel!.copyWith(displayId: newDisplayId);
       logger.i('Generated legacy UID for user $uid: $newDisplayId');
@@ -118,7 +109,7 @@ class AuthProvider extends ChangeNotifier {
         await _authService.updateDisplayName(name);
 
         final now = DateTime.now().millisecondsSinceEpoch;
-        final displayId = _generateDisplayId();
+        final displayId = await _databaseService.generateUniqueDisplayId();
 
         final newUser = UserModel(
           uid: user.uid,
@@ -213,7 +204,7 @@ class AuthProvider extends ChangeNotifier {
         if (existing == null) {
           // New Google user
           final now = DateTime.now().millisecondsSinceEpoch;
-          final displayId = _generateDisplayId();
+          final displayId = await _databaseService.generateUniqueDisplayId();
 
           final newUser = UserModel(
             uid: user.uid,

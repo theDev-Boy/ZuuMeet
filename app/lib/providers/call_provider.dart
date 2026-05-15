@@ -74,6 +74,9 @@ class CallProvider extends ChangeNotifier {
     _webRTCService.onCallStateChange = (state) {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         _connectionStatus = 'Connected';
+        if (_state != CallState.connected) {
+          _state = CallState.connected;
+        }
         notifyListeners();
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
                  state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
@@ -187,8 +190,6 @@ class CallProvider extends ChangeNotifier {
         },
       );
 
-      _state = CallState.connected;
-      _startCallTimer();
       notifyListeners();
     } catch (e) {
       _error = 'Direct call failed.';
@@ -238,8 +239,6 @@ class CallProvider extends ChangeNotifier {
     try {
       await _webRTCService.initLocalStream(localRenderer, isVideo: _videoEnabled);
       await _webRTCService.joinRoom(roomId);
-      _state = CallState.connected;
-      _startCallTimer();
       notifyListeners();
     } catch (e) {
       _error = 'Failed to answer call.';
@@ -264,8 +263,6 @@ class CallProvider extends ChangeNotifier {
       _currentMatch = await _db.getMatch(matchId);
       await _webRTCService.joinRoom(roomId);
       await _db.acceptDirectCall(myUid: myUid, matchId: matchId);
-      _state = CallState.connected;
-      _startCallTimer();
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {
@@ -293,8 +290,6 @@ class CallProvider extends ChangeNotifier {
         'matchId': matchId,
       });
       
-      _state = CallState.connected;
-      _startCallTimer();
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {
@@ -318,12 +313,17 @@ class CallProvider extends ChangeNotifier {
       _connectionStatus = 'Connecting...';
       notifyListeners();
 
-      // Small delay to ensure initiator has finished room creation
-      await Future.delayed(const Duration(milliseconds: 1500));
-      await _webRTCService.joinRoom(roomId);
-
-      _state = CallState.connected;
-      _startCallTimer();
+      var resolvedRoomId = roomId;
+      for (int attempt = 0; attempt < 12; attempt++) {
+        final latestMatch = await _db.getMatch(matchId);
+        final latestRoomId = latestMatch?.roomId;
+        if (latestRoomId != null && latestRoomId.isNotEmpty) {
+          resolvedRoomId = latestRoomId;
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      await _webRTCService.joinRoom(resolvedRoomId);
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {

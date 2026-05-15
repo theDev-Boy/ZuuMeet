@@ -367,6 +367,7 @@ class _IncomingCallWrapperState extends State<IncomingCallWrapper>
             return Transform.translate(
               offset: Offset(shake, -offset),
               child: GestureDetector(
+                onTap: onTap,
                 onPanUpdate: (details) {
                   if (isAccept && details.delta.dy < -10) onTap();
                   if (!isAccept && details.delta.dy > 10) onTap();

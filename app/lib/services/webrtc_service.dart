@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -15,6 +16,9 @@ class WebRTCService {
   StreamStateCallback? onAddRemoteStream;
   CallStateCallback? onCallStateChange;
   VoidCallback? onConnectionConnected; // New callback for precise timing
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _roomSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _callerCandidatesSub;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _calleeCandidatesSub;
 
   final FirebaseFirestore db = FirebaseFirestore.instance;
 
@@ -33,6 +37,12 @@ class WebRTCService {
     };
 
     try {
+      if (localStream != null) {
+        for (final track in localStream!.getTracks()) {
+          track.stop();
+        }
+        await localStream!.dispose();
+      }
       localStream = await navigator.mediaDevices.getUserMedia(mediaConstraints);
       localVideo.srcObject = localStream;
     } catch (e) {
@@ -45,6 +55,7 @@ class WebRTCService {
     peerConnection = await createPeerConnection(configuration);
 
     registerPeerConnectionListeners();
+    await _ensureReceivers(isVideo: isVideo);
 
     localStream?.getTracks().forEach((track) {
       peerConnection?.addTrack(track, localStream!);
@@ -71,7 +82,8 @@ class WebRTCService {
     roomId = roomRef.id;
 
     // Listen for remote answer
-    roomRef.snapshots().listen((snapshot) async {
+    _roomSubscription?.cancel();
+    _roomSubscription = roomRef.snapshots().listen((snapshot) async {
       if (!snapshot.exists) return;
       var data = snapshot.data() as Map<String, dynamic>;
       if (peerConnection?.getRemoteDescription() == null &&
@@ -85,7 +97,8 @@ class WebRTCService {
     });
 
     // Listen for remote ICE candidates
-    roomRef.collection('calleeCandidates').snapshots().listen((snapshot) {
+    _calleeCandidatesSub?.cancel();
+    _calleeCandidatesSub = roomRef.collection('calleeCandidates').snapshots().listen((snapshot) {
       for (var change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.added) {
           var data = change.doc.data() as Map<String, dynamic>;
@@ -110,9 +123,11 @@ class WebRTCService {
     var roomSnapshot = await roomRef.get();
 
     if (!roomSnapshot.exists) return;
+    var data = roomSnapshot.data() as Map<String, dynamic>;
 
     peerConnection = await createPeerConnection(configuration);
     registerPeerConnectionListeners();
+    await _ensureReceivers(isVideo: data['type'] != 'audio');
 
     localStream?.getTracks().forEach((track) {
       peerConnection?.addTrack(track, localStream!);
@@ -123,7 +138,6 @@ class WebRTCService {
       calleeCandidatesRef.add(candidate.toMap());
     };
 
-    var data = roomSnapshot.data() as Map<String, dynamic>;
     var offer = data['offer'];
     await peerConnection?.setRemoteDescription(
       RTCSessionDescription(offer['sdp'], offer['type']),
@@ -136,7 +150,8 @@ class WebRTCService {
       'answer': {'type': answer.type, 'sdp': answer.sdp}
     });
 
-    roomRef.collection('callerCandidates').snapshots().listen((snapshot) {
+    _callerCandidatesSub?.cancel();
+    _callerCandidatesSub = roomRef.collection('callerCandidates').snapshots().listen((snapshot) {
       for (var change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.added) {
           var data = change.doc.data() as Map<String, dynamic>;
@@ -154,6 +169,12 @@ class WebRTCService {
 
   /// Hangup / Disconnect
   Future<void> hangUp(RTCVideoRenderer localVideo) async {
+    await _roomSubscription?.cancel();
+    await _callerCandidatesSub?.cancel();
+    await _calleeCandidatesSub?.cancel();
+    _roomSubscription = null;
+    _callerCandidatesSub = null;
+    _calleeCandidatesSub = null;
     localStream?.getTracks().forEach((track) => track.stop());
     remoteStream?.getTracks().forEach((track) => track.stop());
     await peerConnection?.close();
@@ -189,6 +210,19 @@ class WebRTCService {
       onAddRemoteStream?.call(stream);
       remoteStream = stream;
     };
+  }
+
+  Future<void> _ensureReceivers({required bool isVideo}) async {
+    await peerConnection?.addTransceiver(
+      kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+      init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+    );
+    if (isVideo) {
+      await peerConnection?.addTransceiver(
+        kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+      );
+    }
   }
 
   void toggleMicrophone(bool isMuted) {

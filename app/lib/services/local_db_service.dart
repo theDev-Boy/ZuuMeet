@@ -211,6 +211,16 @@ class LocalDbService {
         .toList();
   }
 
+  Future<List<Map<String, dynamic>>> searchMessages(String query) async {
+    final dbClient = await db;
+    return dbClient.query(
+      'local_messages',
+      where: 'LOWER(text) LIKE ?',
+      whereArgs: ['%${query.toLowerCase()}%'],
+      orderBy: 'timestamp DESC',
+    );
+  }
+
   Future<void> clearChatLocally(String chatId) async {
     final dbClient = await db;
     // The requirement: "Execute DELETE query on local SQLite/Hive box scoped to that chat ID."

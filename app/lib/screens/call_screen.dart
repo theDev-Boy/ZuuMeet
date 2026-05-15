@@ -18,6 +18,128 @@ class CallScreen extends StatefulWidget {
 class _CallScreenState extends State<CallScreen> {
   Offset _localVideoOffset = const Offset(20, 20); // Initial position (from right/top)
 
+  Future<void> _showPartnerProfile(
+    BuildContext screenContext,
+    String partnerUid,
+    AuthProvider auth,
+  ) async {
+    final partner = await DatabaseService().getUser(partnerUid);
+    if (!mounted || !screenContext.mounted || partner == null) {
+      return;
+    }
+    final blockState =
+        await DatabaseService().getBlockState(auth.firebaseUser!.uid, partnerUid);
+    if (!mounted || !screenContext.mounted) {
+      return;
+    }
+    final isFriend = auth.userModel?.friends.contains(partnerUid) ?? false;
+    showModalBottomSheet(
+      context: screenContext,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Theme.of(ctx).brightness == Brightness.dark
+              ? const Color(0xFF1E1E1E)
+              : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 42,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 18),
+              decoration: BoxDecoration(
+                color: Colors.grey.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+            AvatarWidget(name: partner.name, avatarCode: partner.avatarUrl, radius: 42),
+            const SizedBox(height: 16),
+            Text(partner.name, style: Theme.of(ctx).textTheme.titleLarge),
+            const SizedBox(height: 6),
+            Text(partner.displayId, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Text(
+              '${partner.flagEmoji} ${partner.country.isEmpty ? 'Unknown country' : partner.country}',
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Age: ${partner.age.isEmpty ? 'N/A' : partner.age}  |  ${partner.gender.isEmpty ? 'N/A' : partner.gender}',
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+            const SizedBox(height: 20),
+            Wrap(
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                if (isFriend)
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      final chatId = ([auth.firebaseUser!.uid, partnerUid]..sort()).join('_');
+                      Navigator.pop(ctx);
+                      screenContext.push('/chat/$chatId');
+                    },
+                    icon: const Icon(Icons.chat_rounded),
+                    label: const Text('Chat'),
+                  ),
+                if (!isFriend)
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        await DatabaseService().sendFriendRequest(auth.firebaseUser!.uid, partnerUid);
+                        if (!ctx.mounted) {
+                          return;
+                        }
+                        if (mounted && screenContext.mounted) {
+                          Navigator.pop(ctx);
+                          ScaffoldMessenger.of(screenContext).showSnackBar(
+                            const SnackBar(content: Text('Friend request sent.')),
+                          );
+                        }
+                      } catch (e) {
+                        if (ctx.mounted && mounted && screenContext.mounted) {
+                          ScaffoldMessenger.of(screenContext).showSnackBar(
+                            SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))),
+                          );
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.person_add_alt_1_rounded),
+                    label: const Text('Request'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    if (blockState['iBlocked'] == true) {
+                      await DatabaseService().unblockUser(auth.firebaseUser!.uid, partnerUid);
+                    } else {
+                      await DatabaseService().blockUser(auth.firebaseUser!.uid, partnerUid);
+                    }
+                    await auth.refreshUser();
+                    if (ctx.mounted && mounted) {
+                      Navigator.pop(ctx);
+                    }
+                  },
+                  icon: Icon(
+                    blockState['iBlocked'] == true
+                        ? Icons.lock_open_rounded
+                        : Icons.block_rounded,
+                  ),
+                  label: Text(blockState['iBlocked'] == true ? 'Unblock' : 'Block'),
+                ),
+              ],
+            ),
+            SizedBox(height: MediaQuery.of(ctx).padding.bottom + 12),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final call = context.watch<CallProvider>();
@@ -168,6 +290,11 @@ class _CallScreenState extends State<CallScreen> {
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16),
                             overflow: TextOverflow.ellipsis,
                           ),
+                          if ((call.partnerCountry ?? '').isNotEmpty)
+                            Text(
+                              call.partnerCountry ?? '',
+                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                            ),
                           Text(
                             call.callDurationFormatted,
                             style: const TextStyle(color: AppColors.success, fontSize: 12, fontWeight: FontWeight.w600),
@@ -197,20 +324,36 @@ class _CallScreenState extends State<CallScreen> {
             : call.currentMatch!.user1;
 
         if (value == 'profile') {
-          // View Profile Logic
+          await _showPartnerProfile(context, partnerUid, auth);
         } else if (value == 'request') {
-          await DatabaseService().sendFriendRequest(auth.firebaseUser!.uid, partnerUid);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request Sent!')));
+          try {
+            await DatabaseService().sendFriendRequest(auth.firebaseUser!.uid, partnerUid);
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Request sent!')));
+            }
+          } catch (e) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))),
+              );
+            }
           }
         } else if (value == 'block') {
           await DatabaseService().blockUser(auth.firebaseUser!.uid, partnerUid);
           await auth.refreshUser();
           await call.stopCompletely(auth.firebaseUser!.uid);
           if (context.mounted) context.go('/home');
+        } else if (value == 'unblock') {
+          await DatabaseService().unblockUser(auth.firebaseUser!.uid, partnerUid);
+          await auth.refreshUser();
         }
       },
-      itemBuilder: (context) => [
+      itemBuilder: (context) {
+        final partnerUid = call.currentMatch!.user1 == auth.firebaseUser!.uid
+            ? call.currentMatch!.user2
+            : call.currentMatch!.user1;
+        final hasIBlocked = auth.userModel?.blockedUsers.contains(partnerUid) ?? false;
+        return [
         const PopupMenuItem(
           value: 'profile',
           child: Row(
@@ -223,13 +366,18 @@ class _CallScreenState extends State<CallScreen> {
             children: [Icon(Icons.person_add, color: Colors.white, size: 20), SizedBox(width: 10), Text('Send Request', style: TextStyle(color: Colors.white))],
           ),
         ),
-        const PopupMenuItem(
-          value: 'block',
+        PopupMenuItem(
+          value: hasIBlocked ? 'unblock' : 'block',
           child: Row(
-            children: [Icon(Icons.block, color: AppColors.error, size: 20), SizedBox(width: 10), Text('Block User', style: TextStyle(color: AppColors.error))],
+            children: [
+              Icon(hasIBlocked ? Icons.lock_open_rounded : Icons.block, color: AppColors.error, size: 20),
+              const SizedBox(width: 10),
+              Text(hasIBlocked ? 'Unblock User' : 'Block User', style: const TextStyle(color: AppColors.error))
+            ],
           ),
         ),
-      ],
+      ];
+      },
     );
   }
 

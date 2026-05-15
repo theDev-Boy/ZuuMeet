@@ -440,13 +440,21 @@ class _DiscoveryModalState extends State<_DiscoveryModal> {
     if (_foundUser == null) return;
     
     setState(() => _isSearching = true);
-    await _db.sendFriendRequest(widget.currentUser.uid, _foundUser!.uid);
-    
-    if (mounted) {
-      setState(() {
-        _isSearching = false;
-        _requestSent = true;
-      });
+    try {
+      await _db.sendFriendRequest(widget.currentUser.uid, _foundUser!.uid);
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+          _requestSent = true;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSearching = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))),
+        );
+      }
     }
   }
 

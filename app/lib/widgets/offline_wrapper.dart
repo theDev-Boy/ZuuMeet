@@ -13,16 +13,26 @@ class OfflineWrapper extends StatefulWidget {
 
 class _OfflineWrapperState extends State<OfflineWrapper> {
   bool _isOffline = false;
+  bool _showBackOnline = false;
 
   @override
   void initState() {
     super.initState();
     _checkConnectivity();
     Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) {
+      final nextOffline = results.every((result) => result == ConnectivityResult.none);
       if (mounted) {
         setState(() {
-          _isOffline = results.every((result) => result == ConnectivityResult.none);
+          _showBackOnline = _isOffline && !nextOffline;
+          _isOffline = nextOffline;
         });
+        if (_showBackOnline) {
+          Future<void>.delayed(const Duration(seconds: 3), () {
+            if (mounted) {
+              setState(() => _showBackOnline = false);
+            }
+          });
+        }
       }
     });
   }
@@ -66,6 +76,45 @@ class _OfflineWrapperState extends State<OfflineWrapper> {
                       Expanded(
                         child: Text(
                           'Waiting for network...',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (_showBackOnline)
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 4,
+              left: 20,
+              right: 20,
+              child: Material(
+                color: Colors.transparent,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withValues(alpha: 0.95),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 8, offset: const Offset(0, 2))
+                    ],
+                  ),
+                  child: const Row(
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Back online. Syncing your app...',
                           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
                         ),
                       ),

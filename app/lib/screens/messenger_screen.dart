@@ -13,6 +13,7 @@ import '../models/user_model.dart';
 import '../services/database_service.dart';
 import '../services/chat_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/local_db_service.dart';
 import '../utils/constants.dart';
 import 'package:intl/intl.dart';
 
@@ -327,9 +328,15 @@ class _MessengerScreenState extends State<MessengerScreen> {
                         
                         final allUsersData = Map<dynamic, dynamic>.from(snapshot.data!.snapshot.value as Map);
                         final List<UserModel> currentFriends = [];
+                        final liveCurrentUser = allUsersData[myUid] == null
+                            ? myData
+                            : UserModel.fromJson(
+                                Map<dynamic, dynamic>.from(allUsersData[myUid]),
+                                myUid,
+                              );
                         
                         // Filter friends only
-                        for (final fid in (auth.userModel?.friends ?? [])) {
+                        for (final fid in liveCurrentUser.friends) {
                           if (allUsersData.containsKey(fid)) {
                             currentFriends.add(UserModel.fromJson(Map<dynamic, dynamic>.from(allUsersData[fid]), fid));
                           }
@@ -418,6 +425,7 @@ class _MessengerSearchDelegate extends SearchDelegate<String> {
   final List<ChatModel> chats;
   final String myUid;
   final Future<UserModel?> Function(String uid) getUser;
+  final LocalDbService _localDb = LocalDbService();
 
   @override
   List<Widget>? buildActions(BuildContext context) {
@@ -444,32 +452,55 @@ class _MessengerSearchDelegate extends SearchDelegate<String> {
   Widget buildSuggestions(BuildContext context) => _buildList(context);
 
   Widget _buildList(BuildContext context) {
-    final filtered = chats.where((chat) {
-      return chat.lastMessage.toLowerCase().contains(query.toLowerCase()) ||
-          chat.chatId.toLowerCase().contains(query.toLowerCase());
-    }).toList();
-    if (filtered.isEmpty) {
-      return const Center(child: Text('No chats found.'));
+    if (query.trim().isEmpty) {
+      return const Center(child: Text('Search chats, names, or messages.'));
     }
-    return ListView.builder(
-      itemCount: filtered.length,
-      itemBuilder: (context, index) {
-        final ChatModel chat = filtered[index];
-        final partnerId = chat.participants.firstWhere(
-          (id) => id != myUid,
-          orElse: () => '',
-        );
-        return FutureBuilder<UserModel?>(
-          future: getUser(partnerId),
-          builder: (context, snapshot) {
-            final partner = snapshot.data;
-            final title = partner?.name ?? partnerId;
-            return ListTile(
-              title: Text(title),
-              subtitle: Text(chat.lastMessage),
-              onTap: () {
-                close(context, chat.chatId);
-                context.push('/chat/${chat.chatId}');
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _localDb.searchMessages(query.trim()),
+      builder: (context, messageSnapshot) {
+        final messageRows = messageSnapshot.data ?? const [];
+        final Set<String> messageChatIds = messageRows
+            .map((row) => row['chatId'] as String? ?? '')
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        final filtered = chats.where((chat) {
+          return chat.lastMessage.toLowerCase().contains(query.toLowerCase()) ||
+              chat.chatId.toLowerCase().contains(query.toLowerCase()) ||
+              messageChatIds.contains(chat.chatId);
+        }).toList();
+        if (filtered.isEmpty) {
+          return const Center(child: Text('No chats found.'));
+        }
+        return ListView.builder(
+          itemCount: filtered.length,
+          itemBuilder: (context, index) {
+            final ChatModel chat = filtered[index];
+            final partnerId = chat.participants.firstWhere(
+              (id) => id != myUid,
+              orElse: () => '',
+            );
+            return FutureBuilder<UserModel?>(
+              future: getUser(partnerId),
+              builder: (context, snapshot) {
+                final partner = snapshot.data;
+                final title = partner?.name ?? partnerId;
+                final matchedRow = messageRows.cast<Map<String, dynamic>?>().firstWhere(
+                      (row) => row?['chatId'] == chat.chatId,
+                      orElse: () => null,
+                    );
+                final subtitle = matchedRow?['text'] as String? ?? chat.lastMessage;
+                return ListTile(
+                  title: Text(title),
+                  subtitle: Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    close(context, chat.chatId);
+                    context.push('/chat/${chat.chatId}');
+                  },
+                );
               },
             );
           },

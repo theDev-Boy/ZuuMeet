@@ -131,7 +131,7 @@ class _ChatScreenState extends State<ChatScreen> {
     Future.delayed(const Duration(milliseconds: 200), () {
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent + 60,
+          0,
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeOut,
         );
@@ -224,7 +224,7 @@ class _ChatScreenState extends State<ChatScreen> {
       Future.delayed(const Duration(milliseconds: 200), () {
         if (_scrollCtrl.hasClients) {
           _scrollCtrl.animateTo(
-            _scrollCtrl.position.maxScrollExtent + 60,
+            0,
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
           );
@@ -344,55 +344,107 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showPartnerProfile() {
     if (_partner == null) return;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final auth = context.read<AuthProvider>();
+    final myUid = auth.firebaseUser!.uid;
 
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (ctx) => Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AvatarWidget(name: _partner!.name, avatarCode: _partner!.avatarUrl, radius: 50),
-            const SizedBox(height: 16),
-            Text(_partner!.name, style: AppTypography.headlineMedium),
-            const SizedBox(height: 4),
-            Text(_partner!.email, style: const TextStyle(color: AppColors.textSecondary)),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+        child: FutureBuilder<Map<String, bool>>(
+          future: DatabaseService().getBlockState(myUid, _partnerId),
+          builder: (context, blockSnapshot) {
+            final iBlocked = blockSnapshot.data?['iBlocked'] ?? false;
+            final isFriend = auth.userModel?.friends.contains(_partnerId) ?? false;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 10, height: 10,
+                  width: 42,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 18),
                   decoration: BoxDecoration(
-                    color: _partner!.isOnline ? AppColors.success : Colors.grey,
-                    shape: BoxShape.circle,
+                    color: Colors.grey.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
-                const SizedBox(width: 8),
+                AvatarWidget(name: _partner!.name, avatarCode: _partner!.avatarUrl, radius: 50),
+                const SizedBox(height: 16),
+                Text(_partner!.name, style: AppTypography.headlineMedium),
+                const SizedBox(height: 4),
+                Text(_partner!.displayId, style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                Text(_partner!.email, style: const TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 6),
                 Text(
-                  _partner!.isOnline ? 'Online' : 'Offline',
-                  style: TextStyle(
-                    color: _partner!.isOnline ? AppColors.success : AppColors.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  '${_partner!.flagEmoji} ${_partner!.country.isEmpty ? 'Unknown country' : _partner!.country}',
+                  style: const TextStyle(color: AppColors.textSecondary),
                 ),
+                const SizedBox(height: 6),
+                Text(
+                  'Age: ${_partner!.age.isEmpty ? 'N/A' : _partner!.age}  |  ${_partner!.gender.isEmpty ? 'N/A' : _partner!.gender}',
+                  style: const TextStyle(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 20),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    if (isFriend)
+                      _profileAction(Icons.chat_rounded, 'Chat', () {
+                        Navigator.pop(ctx);
+                      }),
+                    if (!isFriend)
+                      _profileAction(Icons.person_add_alt_1_rounded, 'Request', () async {
+                        try {
+                          await DatabaseService().sendFriendRequest(myUid, _partnerId);
+                          if (!ctx.mounted) {
+                            return;
+                          }
+                          if (mounted && context.mounted) {
+                            Navigator.pop(ctx);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Friend request sent.')),
+                            );
+                          }
+                        } catch (e) {
+                          if (ctx.mounted && mounted && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text(e.toString().replaceFirst('Bad state: ', ''))),
+                            );
+                          }
+                        }
+                      }),
+                    _profileAction(Icons.call_rounded, 'Audio', _startAudioCall),
+                    _profileAction(Icons.videocam_rounded, 'Video', _startVideoCall),
+                    _profileAction(
+                      iBlocked ? Icons.lock_open_rounded : Icons.block_rounded,
+                      iBlocked ? 'Unblock' : 'Block',
+                      () async {
+                        if (iBlocked) {
+                          await DatabaseService().unblockUser(myUid, _partnerId);
+                        } else {
+                          await DatabaseService().blockUser(myUid, _partnerId);
+                        }
+                        await auth.refreshUser();
+                        if (ctx.mounted && mounted) {
+                          Navigator.pop(ctx);
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                SizedBox(height: MediaQuery.of(ctx).padding.bottom + 12),
               ],
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _profileAction(Icons.call_rounded, 'Audio Call', _startAudioCall),
-                _profileAction(Icons.videocam_rounded, 'Video Call', _startVideoCall),
-              ],
-            ),
-            SizedBox(height: MediaQuery.of(ctx).padding.bottom + 12),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -520,6 +572,8 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
           PopupMenuButton<String>(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
             onSelected: (val) {
               if (val == 'clear') {
                 context.read<ChatProvider>().clearChat(widget.chatId);
@@ -530,15 +584,28 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SnackBar(content: Text('User blocked'), backgroundColor: AppColors.error),
                 );
                 context.pop();
+              } else if (val == 'unblock') {
+                DatabaseService().unblockUser(myUid, _partnerId);
+                context.read<AuthProvider>().refreshUser();
+              } else if (val == 'profile') {
+                _showPartnerProfile();
               }
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(value: 'clear', child: Text('Clear Chat')),
-              const PopupMenuItem(
-                value: 'block',
-                child: Text('Block User', style: TextStyle(color: AppColors.error)),
-              ),
-            ],
+            itemBuilder: (context) {
+              final hasIBlockedPartner =
+                  auth.userModel?.blockedUsers.contains(_partnerId) ?? false;
+              return [
+                const PopupMenuItem(value: 'profile', child: Text('View Profile')),
+                const PopupMenuItem(value: 'clear', child: Text('Clear Chat')),
+                PopupMenuItem(
+                  value: hasIBlockedPartner ? 'unblock' : 'block',
+                  child: Text(
+                    hasIBlockedPartner ? 'Unblock User' : 'Block User',
+                    style: const TextStyle(color: AppColors.error),
+                  ),
+                ),
+              ];
+            },
           ),
         ],
       ),
@@ -756,10 +823,14 @@ class _ChatScreenState extends State<ChatScreen> {
           ? _formatMillis(msg.voiceDurationMs!)
           : '0:00';
       final isPlaying = _playingMessageId == msg.id;
-      final total = _playingDuration.inMilliseconds == 0
-          ? (msg.voiceDurationMs ?? 1)
-          : _playingDuration.inMilliseconds;
-      final progress = (_playingPosition.inMilliseconds / total).clamp(0.0, 1.0);
+      final total = isPlaying
+          ? (_playingDuration.inMilliseconds == 0
+              ? (msg.voiceDurationMs ?? 1)
+              : _playingDuration.inMilliseconds)
+          : (msg.voiceDurationMs ?? 1);
+      final progress = isPlaying
+          ? (_playingPosition.inMilliseconds / total).clamp(0.0, 1.0)
+          : 0.0;
       return Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
         child: GestureDetector(

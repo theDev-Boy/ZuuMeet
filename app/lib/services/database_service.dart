@@ -273,6 +273,10 @@ class DatabaseService {
     required String calleeAvatar,
     required bool isVideo,
   }) async {
+    final blockState = await getBlockState(caller.uid, calleeUid);
+    if (blockState['iBlocked'] == true || blockState['blockedByPartner'] == true) {
+      throw StateError('Blocked users cannot call each other.');
+    }
     final matchRef = _db.ref(AppConstants.matchesPath).push();
     final matchId = matchRef.key!;
     final channelParts = [caller.uid, calleeUid]..sort();
@@ -506,6 +510,22 @@ class DatabaseService {
   /// Send a friend request.
   Future<void> sendFriendRequest(String senderUid, String receiverUid) async {
     try {
+      if (senderUid == receiverUid) {
+        throw StateError('You cannot send a request to yourself.');
+      }
+      final sender = await getUser(senderUid);
+      final receiver = await getUser(receiverUid);
+      if (sender == null || receiver == null) {
+        throw StateError('User not found.');
+      }
+      if (sender.friends.contains(receiverUid) || receiver.friends.contains(senderUid)) {
+        throw StateError('You are already friends.');
+      }
+      if (sender.blockedUsers.contains(receiverUid) ||
+          receiver.blockedUsers.contains(senderUid)) {
+        throw StateError('Blocked users cannot exchange requests.');
+      }
+
       // 1. Update receiver's incoming requests
       final receiverRef = _db.ref(AppConstants.usersPath).child(receiverUid).child('friendRequests');
       final recSnapshot = await receiverRef.get();
@@ -516,6 +536,8 @@ class DatabaseService {
       if (!incoming.contains(senderUid)) {
         incoming.add(senderUid);
         await receiverRef.set(incoming);
+      } else {
+        throw StateError('Request already sent.');
       }
 
       // 2. Update sender's outgoing requests history
@@ -529,6 +551,15 @@ class DatabaseService {
         outgoing.add(receiverUid);
         await senderRef.set(outgoing);
       }
+
+      await sendNotificationTrigger(
+        receiverUid: receiverUid,
+        senderName: sender.name,
+        type: 'friend_request',
+        data: {
+          'senderUid': senderUid,
+        },
+      );
     } catch (e) {
       logger.e('Failed to send friend request', error: e);
       rethrow;
@@ -666,7 +697,7 @@ class DatabaseService {
       final snapshot = await _db
           .ref(AppConstants.usersPath)
           .orderByChild('displayId')
-          .equalTo(query.trim())
+          .equalTo(normalized)
           .get();
 
       if (snapshot.exists && snapshot.value != null) {
