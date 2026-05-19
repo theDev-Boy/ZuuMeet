@@ -43,11 +43,12 @@ class _DirectVideoCallScreenState extends State<DirectVideoCallScreen> {
           partnerUid: widget.partnerUid,
           isVideo: true,
         );
-      } else if (widget.roomId != null && widget.matchId != null) {
+      } else if (!widget.isOutgoing && widget.matchId != null) {
+        final roomId = (widget.roomId != null && widget.roomId!.isNotEmpty) ? widget.roomId! : widget.matchId!;
         call.answerMatchCall(
           myUid: auth.firebaseUser!.uid,
           matchId: widget.matchId!,
-          roomId: widget.roomId!,
+          roomId: roomId,
           isVideo: true,
         );
       }

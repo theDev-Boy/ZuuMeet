@@ -49,6 +49,37 @@ class UserModel extends Equatable {
   });
 
   factory UserModel.fromJson(Map<dynamic, dynamic> json, String uid) {
+    // Firebase RTDB can return a list as a Map<index, value> when items are
+    // deleted from the middle, causing a hard cast to List<dynamic> to fail.
+    // This helper handles both cases safely.
+    List<String> parseStringList(dynamic value) {
+      if (value == null) return [];
+      if (value is List) {
+        return value
+            .where((e) => e != null)
+            .map((e) => e.toString())
+            .toList();
+      }
+      if (value is Map) {
+        return value.values
+            .where((e) => e != null)
+            .map((e) => e.toString())
+            .toList();
+      }
+      return [];
+    }
+
+    List<int> parseIntList(dynamic value) {
+      if (value == null) return [];
+      if (value is List) {
+        return value.whereType<num>().map((e) => e.toInt()).toList();
+      }
+      if (value is Map) {
+        return value.values.whereType<num>().map((e) => e.toInt()).toList();
+      }
+      return [];
+    }
+
     return UserModel(
       uid: uid,
       name: json['name'] as String? ?? '',
@@ -60,32 +91,17 @@ class UserModel extends Equatable {
       countryCode: json['countryCode'] as String? ?? '',
       isOnline: json['isOnline'] as bool? ?? false,
       isSearching: json['isSearching'] as bool? ?? false,
-      createdAt: json['createdAt'] as int? ?? 0,
-      lastActive: json['lastActive'] as int? ?? 0,
-      blockedUsers: (json['blockedUsers'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      friends: (json['friends'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      friendRequests: (json['friendRequests'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
-      sentRequests: (json['sentRequests'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [],
+      createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
+      lastActive: (json['lastActive'] as num?)?.toInt() ?? 0,
+      blockedUsers: parseStringList(json['blockedUsers']),
+      friends: parseStringList(json['friends']),
+      friendRequests: parseStringList(json['friendRequests']),
+      sentRequests: parseStringList(json['sentRequests']),
       avatarUrl: json['avatarUrl'] as String? ?? '',
       frameId: json['frameId'] as String? ?? 'free_border',
       isVip: json['isVip'] as bool? ?? false,
       displayId: json['displayId'] as String? ?? '',
-      profileEditTimestamps: (json['profileEditTimestamps'] as List<dynamic>?)
-              ?.map((e) => (e as num).toInt())
-              .toList() ??
-          [],
+      profileEditTimestamps: parseIntList(json['profileEditTimestamps']),
     );
   }
 

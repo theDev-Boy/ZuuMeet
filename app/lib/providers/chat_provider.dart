@@ -240,15 +240,28 @@ class ChatProvider extends ChangeNotifier {
         .child('messages')
         .child(messageId);
     if (everyone) {
-      await ref.remove();
+      // Write a ghost "deleted" record visible to everyone
+      await ref.update({
+        'text': '🗑️ This message was deleted',
+        'type': 'text',
+        'voiceBase64': null,
+        'voiceMimeType': null,
+        'voiceDurationMs': null,
+        'voiceSizeBytes': null,
+        'deletedForEveryone': true,
+        'isEdited': false,
+      });
     } else {
       if (_myUid.isNotEmpty) {
         final snap = await ref.child('deletedFor').get();
         List<String> current = [];
         if (snap.exists && snap.value != null) {
-          current = (snap.value as Object) is List
-              ? (snap.value as List).map((e) => e.toString()).toList()
-              : [];
+          final val = snap.value;
+          if (val is List) {
+            current = val.map((e) => e.toString()).toList();
+          } else if (val is Map) {
+            current = val.values.map((e) => e.toString()).toList();
+          }
         }
         if (!current.contains(_myUid)) {
           current.add(_myUid);

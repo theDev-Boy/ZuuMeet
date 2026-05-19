@@ -455,52 +455,98 @@ class _MessengerSearchDelegate extends SearchDelegate<String> {
     if (query.trim().isEmpty) {
       return const Center(child: Text('Search chats, names, or messages.'));
     }
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _localDb.searchMessages(query.trim()),
-      builder: (context, messageSnapshot) {
-        final messageRows = messageSnapshot.data ?? const [];
+
+    final Future<List<UserModel?>> partnersFuture = Future.wait(
+      chats.map((chat) {
+        final partnerId = chat.participants.firstWhere(
+          (id) => id != myUid,
+          orElse: () => '',
+        );
+        return getUser(partnerId);
+      }),
+    );
+
+    return FutureBuilder<List<dynamic>>(
+      future: Future.wait([
+        partnersFuture,
+        _localDb.searchMessages(query.trim()),
+      ]),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final partnersList = snapshot.data![0] as List<UserModel?>;
+        final messageRows = snapshot.data![1] as List<Map<String, dynamic>>;
+
         final Set<String> messageChatIds = messageRows
             .map((row) => row['chatId'] as String? ?? '')
             .where((id) => id.isNotEmpty)
             .toSet();
-        final filtered = chats.where((chat) {
-          return chat.lastMessage.toLowerCase().contains(query.toLowerCase()) ||
-              chat.chatId.toLowerCase().contains(query.toLowerCase()) ||
-              messageChatIds.contains(chat.chatId);
-        }).toList();
-        if (filtered.isEmpty) {
-          return const Center(child: Text('No chats found.'));
+
+        final List<Map<String, dynamic>> results = [];
+
+        for (int i = 0; i < chats.length; i++) {
+          final chat = chats[i];
+          final partner = i < partnersList.length ? partnersList[i] : null;
+          final partnerName = partner?.name ?? '';
+          final partnerDisplayId = partner?.displayId ?? '';
+
+          final matchesName = partnerName.toLowerCase().contains(query.toLowerCase());
+          final matchesDisplayId = partnerDisplayId.toLowerCase().contains(query.toLowerCase());
+          final matchesLastMsg = chat.lastMessage.toLowerCase().contains(query.toLowerCase());
+          final matchesMsgHistory = messageChatIds.contains(chat.chatId);
+
+          if (matchesName || matchesDisplayId || matchesLastMsg || matchesMsgHistory) {
+            results.add({
+              'chat': chat,
+              'partner': partner,
+              'matchedMessage': messageRows.firstWhere(
+                (row) => row['chatId'] == chat.chatId,
+                orElse: () => <String, dynamic>{},
+              )['text'] as String?,
+            });
+          }
         }
+
+        if (results.isEmpty) {
+          return const Center(child: Text('No results found.'));
+        }
+
         return ListView.builder(
-          itemCount: filtered.length,
+          itemCount: results.length,
           itemBuilder: (context, index) {
-            final ChatModel chat = filtered[index];
-            final partnerId = chat.participants.firstWhere(
-              (id) => id != myUid,
-              orElse: () => '',
-            );
-            return FutureBuilder<UserModel?>(
-              future: getUser(partnerId),
-              builder: (context, snapshot) {
-                final partner = snapshot.data;
-                final title = partner?.name ?? partnerId;
-                final matchedRow = messageRows.cast<Map<String, dynamic>?>().firstWhere(
-                      (row) => row?['chatId'] == chat.chatId,
-                      orElse: () => null,
-                    );
-                final subtitle = matchedRow?['text'] as String? ?? chat.lastMessage;
-                return ListTile(
-                  title: Text(title),
-                  subtitle: Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  onTap: () {
-                    close(context, chat.chatId);
-                    context.push('/chat/${chat.chatId}');
-                  },
-                );
+            final item = results[index];
+            final ChatModel chat = item['chat'] as ChatModel;
+            final UserModel? partner = item['partner'] as UserModel?;
+            final String? matchedMsg = item['matchedMessage'] as String?;
+
+            final title = partner?.name ?? 'Anonymous';
+            final subtitle = matchedMsg ?? chat.lastMessage;
+
+            return ListTile(
+              leading: AvatarWidget(
+                name: title,
+                avatarCode: partner?.avatarUrl ?? '',
+                radius: 20,
+              ),
+              title: Row(
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  if (partner != null) ...[
+                    const SizedBox(width: 6),
+                    Text(partner.flagEmoji),
+                  ],
+                ],
+              ),
+              subtitle: Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () {
+                close(context, chat.chatId);
+                context.push('/chat/${chat.chatId}');
               },
             );
           },

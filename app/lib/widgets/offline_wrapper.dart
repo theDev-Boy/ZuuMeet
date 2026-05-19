@@ -1,6 +1,8 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../config/app_colors.dart';
+import '../providers/auth_provider.dart';
 
 class OfflineWrapper extends StatefulWidget {
   final Widget child;
@@ -27,6 +29,8 @@ class _OfflineWrapperState extends State<OfflineWrapper> {
           _isOffline = nextOffline;
         });
         if (_showBackOnline) {
+          // Hard refresh app state when back online
+          context.read<AuthProvider>().refreshUser();
           Future<void>.delayed(const Duration(seconds: 3), () {
             if (mounted) {
               setState(() => _showBackOnline = false);

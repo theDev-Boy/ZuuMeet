@@ -45,6 +45,14 @@ class CallProvider extends ChangeNotifier {
   MatchModel? get currentMatch => _currentMatch;
   String? get partnerName => _partnerName;
   String? get partnerCountry => _partnerCountry;
+  String get partnerFlagEmoji {
+    final code = (_partnerCountry ?? '').trim().toUpperCase();
+    if (code.isEmpty || code.length != 2) return '🌍';
+    return String.fromCharCodes([
+      code.codeUnitAt(0) + 0x1F1A5,
+      code.codeUnitAt(1) + 0x1F1A5,
+    ]);
+  }
   int get callDurationSeconds => _callDurationSeconds;
   String? get error => _error;
   bool get isMicMuted => _isMicMuted;
@@ -313,17 +321,7 @@ class CallProvider extends ChangeNotifier {
       _connectionStatus = 'Connecting...';
       notifyListeners();
 
-      var resolvedRoomId = roomId;
-      for (int attempt = 0; attempt < 12; attempt++) {
-        final latestMatch = await _db.getMatch(matchId);
-        final latestRoomId = latestMatch?.roomId;
-        if (latestRoomId != null && latestRoomId.isNotEmpty) {
-          resolvedRoomId = latestRoomId;
-          break;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-      }
-      await _webRTCService.joinRoom(resolvedRoomId);
+      await _webRTCService.joinRoom(roomId);
       _listenForMatchEnd(matchId);
       notifyListeners();
     } catch (e) {

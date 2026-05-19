@@ -47,9 +47,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final AudioPlayer _voicePlayer = AudioPlayer();
   String? _recordPath;
   final Map<String, String> _voiceFileCache = {};
-  String? _playingMessageId;
-  Duration _playingPosition = Duration.zero;
-  Duration _playingDuration = Duration.zero;
+  // _playingMessageId and _playingPosition are now managed inside _VoiceMessageBubble
+  // Keep a shared player + notifier for single-player constraint
+  final ValueNotifier<String?> _currentlyPlayingId = ValueNotifier(null);
 
   // Partner data
   UserModel? _partner;
@@ -81,6 +81,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _voiceFileCache.clear();
     _recorder.dispose();
     _voicePlayer.dispose();
+    _currentlyPlayingId.dispose();
     super.dispose();
   }
 
@@ -234,20 +235,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _wireVoicePlayerStreams() {
-    _voicePlayer.onPositionChanged.listen((value) {
-      if (!mounted) return;
-      setState(() => _playingPosition = value);
-    });
-    _voicePlayer.onDurationChanged.listen((value) {
-      if (!mounted) return;
-      setState(() => _playingDuration = value);
-    });
     _voicePlayer.onPlayerComplete.listen((_) {
-      if (!mounted) return;
-      setState(() {
-        _playingMessageId = null;
-        _playingPosition = Duration.zero;
-      });
+      _currentlyPlayingId.value = null;
     });
   }
 
@@ -572,8 +561,11 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
           PopupMenuButton<String>(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+            icon: const Icon(Icons.more_vert_rounded),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            color: isDark ? const Color(0xFF1E1E2A) : Colors.white,
+            elevation: 8,
+            offset: const Offset(0, 45),
             onSelected: (val) {
               if (val == 'clear') {
                 context.read<ChatProvider>().clearChat(widget.chatId);
@@ -583,7 +575,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('User blocked'), backgroundColor: AppColors.error),
                 );
-                context.pop();
               } else if (val == 'unblock') {
                 DatabaseService().unblockUser(myUid, _partnerId);
                 context.read<AuthProvider>().refreshUser();
@@ -595,13 +586,45 @@ class _ChatScreenState extends State<ChatScreen> {
               final hasIBlockedPartner =
                   auth.userModel?.blockedUsers.contains(_partnerId) ?? false;
               return [
-                const PopupMenuItem(value: 'profile', child: Text('View Profile')),
-                const PopupMenuItem(value: 'clear', child: Text('Clear Chat')),
+                const PopupMenuItem(
+                  value: 'profile',
+                  child: Row(
+                    children: [
+                      Icon(Icons.person_outline_rounded, size: 20),
+                      SizedBox(width: 12),
+                      Text('View Profile', style: TextStyle(fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'clear',
+                  child: Row(
+                    children: [
+                      Icon(Icons.cleaning_services_rounded, size: 20),
+                      SizedBox(width: 12),
+                      Text('Clear Chat', style: TextStyle(fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+                const PopupMenuDivider(),
                 PopupMenuItem(
                   value: hasIBlockedPartner ? 'unblock' : 'block',
-                  child: Text(
-                    hasIBlockedPartner ? 'Unblock User' : 'Block User',
-                    style: const TextStyle(color: AppColors.error),
+                  child: Row(
+                    children: [
+                      Icon(
+                        hasIBlockedPartner ? Icons.lock_open_rounded : Icons.block_rounded,
+                        size: 20,
+                        color: hasIBlockedPartner ? AppColors.success : AppColors.error,
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        hasIBlockedPartner ? 'Unblock User' : 'Block User',
+                        style: TextStyle(
+                          color: hasIBlockedPartner ? AppColors.success : AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ];
@@ -665,16 +688,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   reverse: true,
                   controller: _scrollCtrl,
                   padding: const EdgeInsets.all(12),
-                  itemCount: messages.length + 1, // +1 for typing indicator
+                  itemCount: messages.length + 1,
                   itemBuilder: (context, index) {
-                    // Typing indicator now at the VERY bottom (index 0 when reversed)
                     if (index == 0) {
                       return StreamBuilder<ChatModel?>(
                         stream: chatProvider.getChatMeta(widget.chatId),
                         builder: (context, metaSnap) {
                           final isPartnerTyping = metaSnap.data?.typingStatus[_partnerId] == true;
                           if (!isPartnerTyping) return const SizedBox.shrink();
-
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: Container(
@@ -692,17 +713,14 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _buildTypingDots(),
-                                ],
+                                children: [_buildTypingDots()],
                               ),
                             ),
                           );
                         },
                       );
                     }
-
-                    final msg = messages[index - 1]; // Offset by 1 because of typing indicator
+                    final msg = messages[index - 1];
                     final isMe = msg.senderId == myUid;
                     return _buildMessageBubble(msg, isMe);
                   },
@@ -818,123 +836,63 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     }
 
-    if (msg.type == MessageType.voice) {
-      final duration = msg.voiceDurationMs != null
-          ? _formatMillis(msg.voiceDurationMs!)
-          : '0:00';
-      final isPlaying = _playingMessageId == msg.id;
-      final total = isPlaying
-          ? (_playingDuration.inMilliseconds == 0
-              ? (msg.voiceDurationMs ?? 1)
-              : _playingDuration.inMilliseconds)
-          : (msg.voiceDurationMs ?? 1);
-      final progress = isPlaying
-          ? (_playingPosition.inMilliseconds / total).clamp(0.0, 1.0)
-          : 0.0;
+    // ── Ghost "deleted for everyone" bubble ──────────────────────────────────
+    if (msg.deletedForEveryone) {
       return Align(
         alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-        child: GestureDetector(
-          onLongPress: () => _showMessageOptions(msg, isMe),
-          child: Container(
-            margin: const EdgeInsets.only(bottom: 4),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: isMe ? AppColors.primary : (isDark ? const Color(0xFF2A2A2A) : Colors.grey[100]),
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(18),
-                topRight: const Radius.circular(18),
-                bottomLeft: Radius.circular(isMe ? 18 : 4),
-                bottomRight: Radius.circular(isMe ? 4 : 18),
-              ),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.grey.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(18),
+              topRight: const Radius.circular(18),
+              bottomLeft: Radius.circular(isMe ? 18 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 18),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.mic_rounded,
-                  color: isMe ? Colors.white : AppColors.primary,
-                  size: 18,
-                ),
-                const SizedBox(width: 6),
-                IconButton(
-                  icon: Icon(
-                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: isMe ? Colors.white : AppColors.primary,
-                    size: 28,
-                  ),
-                  onPressed: () async {
-                    if (msg.voiceBase64 == null || msg.voiceBase64!.isEmpty) return;
-                    if (isPlaying) {
-                      await _voicePlayer.pause();
-                      setState(() => _playingMessageId = null);
-                    } else {
-                      final cached = _voiceFileCache[msg.id];
-                      final path = cached ?? await _decodeVoiceToTempPath(msg);
-                      if (path == null) return;
-                      _voiceFileCache[msg.id] = path;
-                      await _voicePlayer.play(DeviceFileSource(path));
-                      setState(() => _playingMessageId = msg.id);
-                    }
-                  },
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 42,
-                  height: 18,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: List.generate(5, (index) {
-                      final isActive = isPlaying && index.isEven;
-                      final height = isActive ? 16.0 - (index * 1.5) : 8.0;
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        width: 4,
-                        height: height,
-                        decoration: BoxDecoration(
-                          color: isMe
-                              ? Colors.white.withValues(alpha: 0.85)
-                              : AppColors.primary.withValues(alpha: 0.8),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                SizedBox(
-                  width: 90,
-                  child: Slider(
-                    value: progress,
-                    onChanged: (value) async {
-                      final target = Duration(
-                        milliseconds: (total * value).round(),
-                      );
-                      await _voicePlayer.seek(target);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  duration,
-                  style: TextStyle(color: isMe ? Colors.white : (isDark ? Colors.white : Colors.black87)),
-                ),
-                if (isMe) ...[
-                  if (msg.status == 'waiting')
-                    const Padding(
-                      padding: EdgeInsets.only(left: 6),
-                      child: Text(
-                        'Waiting for internet',
-                        style: TextStyle(fontSize: 10, color: Colors.white70),
-                      ),
-                    ),
-                  const SizedBox(width: 6),
-                  _buildStatusIcon(msg.status, isMe: isMe),
-                ],
-              ],
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.08)
+                  : Colors.grey.withValues(alpha: 0.2),
             ),
           ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.do_not_disturb_rounded,
+                  size: 14,
+                  color: isDark ? Colors.white38 : Colors.black38),
+              const SizedBox(width: 6),
+              Text(
+                isMe
+                    ? 'You deleted this message'
+                    : 'This message was deleted',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontStyle: FontStyle.italic,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
+              ),
+            ],
+          ),
         ),
+      );
+    }
+
+
+    if (msg.type == MessageType.voice) {
+      return _VoiceMessageBubble(
+        key: ValueKey('voice_${msg.id}'),
+        msg: msg,
+        isMe: isMe,
+        isDark: isDark,
+        sharedPlayer: _voicePlayer,
+        currentlyPlayingId: _currentlyPlayingId,
+        fileCache: _voiceFileCache,
+        onLongPress: () => _showMessageOptions(msg, isMe),
       );
     }
 
@@ -1053,27 +1011,115 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _showMessageOptions(MessageModel msg, bool isMe) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final chat = context.read<ChatProvider>();
+    final isVoice = msg.type == MessageType.voice;
+    final isText = msg.type == MessageType.text;
+    final isEmoji = msg.type == MessageType.emoji;
+
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (ctx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+        return Container(
+          margin: EdgeInsets.fromLTRB(12, 0, 12,
+              MediaQuery.of(ctx).padding.bottom + 12),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1C1C2E) : Colors.white,
+            borderRadius: BorderRadius.circular(28),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 20,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Handle bar
+                // Drag handle
                 Container(
-                  width: 40, height: 4, margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(color: Colors.grey[400], borderRadius: BorderRadius.circular(2)),
+                  width: 44,
+                  height: 4,
+                  margin: const EdgeInsets.symmetric(vertical: 14),
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
                 ),
-                if (isMe && msg.type == MessageType.text)
-                  ListTile(
-                    leading: const Icon(Icons.edit_rounded, color: AppColors.primary),
-                    title: const Text('Edit Message'),
+
+                // Message preview
+                Container(
+                  margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? Colors.white.withValues(alpha: 0.06)
+                        : Colors.grey.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        isVoice
+                            ? Icons.mic_rounded
+                            : isEmoji
+                                ? Icons.emoji_emotions_rounded
+                                : Icons.chat_bubble_rounded,
+                        color: AppColors.primary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          isVoice
+                              ? '🎤 Voice message'
+                              : isEmoji
+                                  ? msg.text
+                                  : msg.text,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isDark
+                                ? Colors.white70
+                                : Colors.black54,
+                          ),
+                        ),
+                      ),
+                      if (isMe)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: const Text(
+                            'You',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+
+                // Edit (only for my text messages)
+                if (isMe && isText)
+                  _optionTile(
+                    ctx: ctx,
+                    icon: Icons.edit_rounded,
+                    iconColor: AppColors.primary,
+                    label: 'Edit Message',
+                    isDark: isDark,
                     onTap: () {
                       Navigator.pop(ctx);
                       setState(() {
@@ -1082,31 +1128,51 @@ class _ChatScreenState extends State<ChatScreen> {
                       });
                     },
                   ),
-                ListTile(
-                  leading: const Icon(Icons.reply_rounded, color: AppColors.primary),
-                  title: const Text('Reply'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    setState(() => _replyToMessage = msg);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.delete_outline_rounded, color: Colors.orange),
-                  title: const Text('Delete for Me'),
-                  onTap: () {
-                    context.read<ChatProvider>().deleteMessage(widget.chatId, msg.id, everyone: false);
-                    Navigator.pop(ctx);
-                  },
-                ),
-                if (isMe)
-                  ListTile(
-                    leading: const Icon(Icons.delete_forever_rounded, color: AppColors.error),
-                    title: const Text('Delete for Everyone'),
+
+                // Reply (not for voice)
+                if (!isVoice)
+                  _optionTile(
+                    ctx: ctx,
+                    icon: Icons.reply_rounded,
+                    iconColor: const Color(0xFF6C47FF),
+                    label: 'Reply',
+                    isDark: isDark,
                     onTap: () {
-                      context.read<ChatProvider>().deleteMessage(widget.chatId, msg.id, everyone: true);
                       Navigator.pop(ctx);
+                      setState(() => _replyToMessage = msg);
                     },
                   ),
+
+                // Delete for me
+                _optionTile(
+                  ctx: ctx,
+                  icon: Icons.delete_outline_rounded,
+                  iconColor: Colors.orange,
+                  label: 'Delete for Me',
+                  isDark: isDark,
+                  onTap: () {
+                    chat.deleteMessage(widget.chatId, msg.id,
+                        everyone: false);
+                    Navigator.pop(ctx);
+                  },
+                ),
+
+                // Delete for everyone (only sender)
+                if (isMe)
+                  _optionTile(
+                    ctx: ctx,
+                    icon: Icons.delete_forever_rounded,
+                    iconColor: AppColors.error,
+                    label: 'Delete for Everyone',
+                    isDark: isDark,
+                    isDestructive: true,
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _confirmDeleteEveryone(msg);
+                    },
+                  ),
+
+                const SizedBox(height: 8),
               ],
             ),
           ),
@@ -1114,6 +1180,92 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
   }
+
+  Widget _optionTile({
+    required BuildContext ctx,
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required bool isDark,
+    required VoidCallback onTap,
+    bool isDestructive = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: iconColor, size: 20),
+            ),
+            const SizedBox(width: 16),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: isDestructive
+                    ? AppColors.error
+                    : (isDark ? Colors.white : Colors.black87),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDeleteEveryone(MessageModel msg) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        backgroundColor: isDark ? const Color(0xFF1C1C2E) : Colors.white,
+        title: const Text(
+          'Delete for Everyone?',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        content: const Text(
+          'This message will be removed for all participants.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.read<ChatProvider>().deleteMessage(
+                    widget.chatId,
+                    msg.id,
+                    everyone: true,
+                  );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: const Text('Delete',
+                style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+
 
   Widget _buildInputArea() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1252,30 +1404,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  String _formatMillis(int milliseconds) {
-    final totalSeconds = (milliseconds / 1000).round();
-    final minutes = totalSeconds ~/ 60;
-    final seconds = totalSeconds % 60;
-    return '$minutes:${seconds.toString().padLeft(2, '0')}';
-  }
-
-  Future<String?> _decodeVoiceToTempPath(MessageModel msg) async {
-    try {
-      if (msg.voiceBase64 == null) return null;
-      final tempDir = await getTemporaryDirectory();
-      final path = '${tempDir.path}/voice_${msg.id}.m4a';
-      final bytes = base64Decode(msg.voiceBase64!);
-      await File(path).writeAsBytes(bytes, flush: true);
-      return path;
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to play voice message.')),
-        );
-      }
-      return null;
-    }
-  }
 
   Widget _buildStatusIcon(String status, {required bool isMe}) {
     final color = isMe ? Colors.white60 : AppColors.textSecondary;
@@ -1299,3 +1427,299 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-contained voice message bubble — has its OWN AudioPlayer instance.
+// Only THIS bubble's progress bar animates when it's playing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _VoiceMessageBubble extends StatefulWidget {
+  final MessageModel msg;
+  final bool isMe;
+  final bool isDark;
+  final AudioPlayer sharedPlayer;
+  final ValueNotifier<String?> currentlyPlayingId;
+  final Map<String, String> fileCache;
+  final VoidCallback onLongPress;
+
+  const _VoiceMessageBubble({
+    super.key,
+    required this.msg,
+    required this.isMe,
+    required this.isDark,
+    required this.sharedPlayer,
+    required this.currentlyPlayingId,
+    required this.fileCache,
+    required this.onLongPress,
+  });
+
+  @override
+  State<_VoiceMessageBubble> createState() => _VoiceMessageBubbleState();
+}
+
+class _VoiceMessageBubbleState extends State<_VoiceMessageBubble> {
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  bool _isThisPlaying = false;
+
+  late final List<StreamSubscription<dynamic>> _subs;
+
+  @override
+  void initState() {
+    super.initState();
+    _subs = [
+      widget.sharedPlayer.onPositionChanged.listen((pos) {
+        if (_isThisPlaying && mounted) {
+          setState(() => _position = pos);
+        }
+      }),
+      widget.sharedPlayer.onDurationChanged.listen((dur) {
+        if (_isThisPlaying && mounted) {
+          setState(() => _duration = dur);
+        }
+      }),
+      widget.sharedPlayer.onPlayerComplete.listen((_) {
+        if (_isThisPlaying && mounted) {
+          setState(() {
+            _isThisPlaying = false;
+            _position = Duration.zero;
+          });
+          widget.currentlyPlayingId.value = null;
+        }
+      }),
+    ];
+
+    // Listen for another message starting to play
+    widget.currentlyPlayingId.addListener(_onGlobalPlayingChanged);
+  }
+
+  void _onGlobalPlayingChanged() {
+    final nowPlaying = widget.currentlyPlayingId.value;
+    final shouldBePlaying = nowPlaying == widget.msg.id;
+    if (_isThisPlaying != shouldBePlaying) {
+      setState(() {
+        _isThisPlaying = shouldBePlaying;
+        if (!shouldBePlaying) {
+          _position = Duration.zero;
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.currentlyPlayingId.removeListener(_onGlobalPlayingChanged);
+    for (final s in _subs) {
+      s.cancel();
+    }
+    super.dispose();
+  }
+
+  Future<void> _togglePlay() async {
+    if (widget.msg.voiceBase64 == null || widget.msg.voiceBase64!.isEmpty) return;
+
+    if (_isThisPlaying) {
+      await widget.sharedPlayer.pause();
+      widget.currentlyPlayingId.value = null;
+      return;
+    }
+
+    // Stop anything else playing
+    await widget.sharedPlayer.stop();
+    widget.currentlyPlayingId.value = null;
+
+    String? path = widget.fileCache[widget.msg.id];
+    if (path == null) {
+      try {
+        final bytes = base64Decode(widget.msg.voiceBase64!);
+        final dir = await getTemporaryDirectory();
+        final file = File('${dir.path}/voice_${widget.msg.id}.m4a');
+        await file.writeAsBytes(bytes);
+        path = file.path;
+        widget.fileCache[widget.msg.id] = path;
+      } catch (e) {
+        return;
+      }
+    }
+
+    await widget.sharedPlayer.play(DeviceFileSource(path));
+    if (mounted) {
+      setState(() {
+        _isThisPlaying = true;
+        _position = Duration.zero;
+      });
+    }
+    widget.currentlyPlayingId.value = widget.msg.id;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isMe = widget.isMe;
+    final isDark = widget.isDark;
+    final msg = widget.msg;
+
+    final totalMs = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds
+        : (msg.voiceDurationMs ?? 1);
+    final progress = _isThisPlaying
+        ? (_position.inMilliseconds / totalMs).clamp(0.0, 1.0)
+        : 0.0;
+
+    final durationLabel = msg.voiceDurationMs != null
+        ? _fmtMs(msg.voiceDurationMs!)
+        : '0:00';
+
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onLongPress: widget.onLongPress,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: isMe
+                ? AppColors.primary
+                : (isDark ? const Color(0xFF2A2A2A) : Colors.grey[100]),
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(18),
+              topRight: const Radius.circular(18),
+              bottomLeft: Radius.circular(isMe ? 18 : 4),
+              bottomRight: Radius.circular(isMe ? 4 : 18),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Play/Pause button
+              GestureDetector(
+                onTap: _togglePlay,
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: isMe
+                        ? Colors.white.withValues(alpha: 0.2)
+                        : AppColors.primary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    _isThisPlaying
+                        ? Icons.pause_rounded
+                        : Icons.play_arrow_rounded,
+                    color: isMe ? Colors.white : AppColors.primary,
+                    size: 26,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Waveform bars + progress slider
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Waveform bars (animated only for THIS bubble)
+                  SizedBox(
+                    width: 80,
+                    height: 20,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(10, (i) {
+                        final barProgress = i / 10.0;
+                        final isPassed = _isThisPlaying && barProgress < progress;
+                        final heights = [10.0, 16.0, 8.0, 14.0, 18.0, 12.0, 16.0, 10.0, 14.0, 8.0];
+                        return AnimatedContainer(
+                          duration: const Duration(milliseconds: 100),
+                          width: 5,
+                          height: _isThisPlaying ? heights[i] : heights[i] * 0.5,
+                          decoration: BoxDecoration(
+                            color: isPassed
+                                ? (isMe ? Colors.white : AppColors.primary)
+                                : (isMe
+                                    ? Colors.white.withValues(alpha: 0.4)
+                                    : AppColors.primary.withValues(alpha: 0.3)),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  // Progress slider
+                  SizedBox(
+                    width: 80,
+                    height: 14,
+                    child: SliderTheme(
+                      data: SliderThemeData(
+                        trackHeight: 2,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                        overlayShape: SliderComponentShape.noOverlay,
+                        activeTrackColor:
+                            isMe ? Colors.white : AppColors.primary,
+                        inactiveTrackColor: isMe
+                            ? Colors.white.withValues(alpha: 0.3)
+                            : AppColors.primary.withValues(alpha: 0.2),
+                        thumbColor: isMe ? Colors.white : AppColors.primary,
+                      ),
+                      child: Slider(
+                        value: progress.toDouble(),
+                        onChanged: (v) async {
+                          final target =
+                              Duration(milliseconds: (totalMs * v).round());
+                          await widget.sharedPlayer.seek(target);
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(width: 6),
+
+              // Duration
+              Text(
+                durationLabel,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isMe ? Colors.white70 : AppColors.textSecondary,
+                ),
+              ),
+
+              // Status icon (for sent messages)
+              if (isMe) ...[
+                const SizedBox(width: 4),
+                _buildStatusIcon(msg.status, isMe: isMe),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusIcon(String status, {required bool isMe}) {
+    final color = isMe ? Colors.white60 : AppColors.textSecondary;
+    switch (status) {
+      case 'waiting':
+        return const SizedBox(
+          width: 10,
+          height: 10,
+          child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.white70),
+        );
+      case 'seen':
+        return const Icon(Icons.done_all_rounded, size: 12, color: Colors.lightBlueAccent);
+      case 'delivered':
+        return Icon(Icons.done_all_rounded, size: 12, color: color);
+      default:
+        return Icon(Icons.done_rounded, size: 12, color: color);
+    }
+  }
+
+  String _fmtMs(int ms) {
+    final sec = (ms / 1000).round();
+    final m = sec ~/ 60;
+    final s = (sec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+}
+

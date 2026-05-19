@@ -123,14 +123,30 @@ class NotificationRouteWrapper extends StatefulWidget {
   State<NotificationRouteWrapper> createState() => _NotificationRouteWrapperState();
 }
 
-class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
+class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> with SingleTickerProviderStateMixin {
   StreamSubscription<String>? _tapSub;
   StreamSubscription<CallEvent?>? _callEventSub;
+  StreamSubscription<Map<String, dynamic>>? _inAppSub;
   final SystemCallService _systemCalls = SystemCallService();
+
+  // In-app banner state
+  Map<String, dynamic>? _currentBanner;
+  late AnimationController _bannerCtrl;
+  late Animation<Offset> _bannerAnim;
+  Timer? _bannerTimer;
 
   @override
   void initState() {
     super.initState();
+    _bannerCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _bannerAnim = Tween<Offset>(
+      begin: const Offset(0, -1.5),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _bannerCtrl, curve: Curves.easeOutBack));
+
     CallNotificationService().onNotificationTap.listen((payload) {
       if (!mounted) return;
       if (payload.startsWith('call:')) {
@@ -155,6 +171,21 @@ class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
           });
         }
       }
+    });
+
+    _inAppSub = CallNotificationService().onInAppMessage.listen((data) {
+      if (!mounted) return;
+      // Don't show banner if already on that chat screen
+      final currentRoute = GoRouterState.of(context).uri.toString();
+      final targetChatId = data['chatId'];
+      if (currentRoute == '/chat/$targetChatId') return;
+
+      setState(() => _currentBanner = data);
+      _bannerCtrl.forward();
+      _bannerTimer?.cancel();
+      _bannerTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted) _bannerCtrl.reverse();
+      });
     });
 
     // Schedule the 24h engagement reminder
@@ -211,6 +242,7 @@ class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
       final extra = {
         'callId': (data['callId'] ?? matchId).toString(),
         'matchId': matchId,
+        'roomId': (data['roomId'] ?? data['callId'] ?? matchId).toString(),
         'channelName': channelName,
         'partnerUid': partnerUid,
         'partnerName': partnerName,
@@ -227,13 +259,96 @@ class _NotificationRouteWrapperState extends State<NotificationRouteWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    return widget.child;
+    return Stack(
+      children: [
+        widget.child,
+        if (_currentBanner != null)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 8,
+            left: 16,
+            right: 16,
+            child: SlideTransition(
+              position: _bannerAnim,
+              child: Material(
+                color: Colors.transparent,
+                child: GestureDetector(
+                  onTap: () {
+                    _bannerCtrl.reverse();
+                    final chatId = _currentBanner?['chatId'];
+                    if (chatId != null && chatId.isNotEmpty) {
+                      GoRouter.of(context).go('/chat/$chatId');
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF1E1E2A)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.15),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.chat_bubble_rounded,
+                              color: AppColors.primary, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _currentBanner!['title'] ?? 'New Message',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _currentBanner!['body'] ?? 'Tap to view',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   @override
   void dispose() {
     _tapSub?.cancel();
     _callEventSub?.cancel();
+    _inAppSub?.cancel();
+    _bannerCtrl.dispose();
+    _bannerTimer?.cancel();
     super.dispose();
   }
 }

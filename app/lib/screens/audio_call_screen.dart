@@ -41,11 +41,12 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
           partnerUid: widget.partnerUid,
           isVideo: false,
         );
-      } else if (widget.roomId != null && widget.matchId != null) {
+      } else if (!widget.isOutgoing && widget.matchId != null) {
+        final roomId = (widget.roomId != null && widget.roomId!.isNotEmpty) ? widget.roomId! : widget.matchId!;
         call.answerMatchCall(
           myUid: auth.firebaseUser!.uid,
           matchId: widget.matchId!,
-          roomId: widget.roomId!,
+          roomId: roomId,
           isVideo: false,
         );
       }

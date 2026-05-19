@@ -41,7 +41,11 @@ class CallNotificationService {
 
   final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   final StreamController<String> _tapController = StreamController<String>.broadcast();
+  final StreamController<Map<String, dynamic>> _inAppMessageController = StreamController<Map<String, dynamic>>.broadcast();
+
   Stream<String> get onNotificationTap => _tapController.stream;
+  Stream<Map<String, dynamic>> get onInAppMessage => _inAppMessageController.stream;
+
   SystemCallService get _systemCalls => SystemCallService();
   StreamSubscription<DatabaseEvent>? _triggerSubscription;
 
@@ -126,10 +130,16 @@ class CallNotificationService {
       return;
     }
     if (message.data['type'] == 'message') {
+      final payload = {
+        'title': message.data['senderName'] ?? 'New message',
+        'body': message.data['body'] ?? 'Open chat',
+        'chatId': message.data['chatId'] ?? '',
+      };
+      _inAppMessageController.add(payload);
       await showMessageNotification(
-        title: message.data['senderName'] ?? 'New message',
-        body: message.data['body'] ?? 'Open chat',
-        chatId: message.data['chatId'] ?? '',
+        title: payload['title']!,
+        body: payload['body']!,
+        chatId: payload['chatId']!,
       );
     }
   }
@@ -189,10 +199,16 @@ class CallNotificationService {
           final nested = data['data'] is Map
               ? Map<dynamic, dynamic>.from(data['data'] as Map)
               : <dynamic, dynamic>{};
+          final payload = {
+            'title': data['senderName']?.toString() ?? 'New message',
+            'body': nested['body']?.toString() ?? 'Open chat',
+            'chatId': nested['chatId']?.toString() ?? '',
+          };
+          _inAppMessageController.add(payload);
           await showMessageNotification(
-            title: data['senderName']?.toString() ?? 'New message',
-            body: nested['body']?.toString() ?? 'Open chat',
-            chatId: nested['chatId']?.toString() ?? '',
+            title: payload['title']!,
+            body: payload['body']!,
+            chatId: payload['chatId']!,
           );
         } else if (type == 'friend_request') {
           await _notifications.show(

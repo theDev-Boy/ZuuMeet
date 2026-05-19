@@ -368,10 +368,6 @@ class _IncomingCallWrapperState extends State<IncomingCallWrapper>
               offset: Offset(shake, -offset),
               child: GestureDetector(
                 onTap: onTap,
-                onPanUpdate: (details) {
-                  if (isAccept && details.delta.dy < -10) onTap();
-                  if (!isAccept && details.delta.dy > 10) onTap();
-                },
                 child: Container(
                   width: 72,
                   height: 72,

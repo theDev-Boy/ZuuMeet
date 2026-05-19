@@ -16,6 +16,7 @@ class MessageModel {
   final String? replyToMessageId;
   final String? replyToText;
   final String? replyToSenderId;
+  final bool deletedForEveryone;
 
   MessageModel({
     required this.id,
@@ -33,6 +34,7 @@ class MessageModel {
     this.replyToMessageId,
     this.replyToText,
     this.replyToSenderId,
+    this.deletedForEveryone = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -64,13 +66,20 @@ class MessageModel {
         (e) => e.name == map['type'],
         orElse: () => MessageType.text,
       ),
-      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] ?? 0),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(
+          (map['timestamp'] as num?)?.toInt() ?? 0),
       isEdited: map['isEdited'] ?? false,
-      deletedFor: List<String>.from(map['deletedFor'] ?? []),
+      deletedForEveryone: map['deletedForEveryone'] == true,
+      deletedFor: () {
+        final val = map['deletedFor'];
+        if (val is List) return val.map((e) => e.toString()).toList();
+        if (val is Map) return val.values.map((e) => e.toString()).toList();
+        return <String>[];
+      }(),
       voiceBase64: map['voiceBase64'] as String?,
       voiceMimeType: map['voiceMimeType'] as String?,
-      voiceDurationMs: map['voiceDurationMs'] as int?,
-      voiceSizeBytes: map['voiceSizeBytes'] as int?,
+      voiceDurationMs: (map['voiceDurationMs'] as num?)?.toInt(),
+      voiceSizeBytes: (map['voiceSizeBytes'] as num?)?.toInt(),
       status: (map['status'] as String?) ?? 'sent',
       replyToMessageId: map['replyToMessageId'] as String?,
       replyToText: map['replyToText'] as String?,

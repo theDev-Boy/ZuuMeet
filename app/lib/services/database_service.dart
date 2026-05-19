@@ -691,26 +691,34 @@ class DatabaseService {
   Future<UserModel?> searchUser(String query) async {
     try {
       final normalized = query.trim().toLowerCase();
+      
+      // 1. Try directly fetching by Firebase UID (exact match)
       final userByUid = await getUser(query.trim());
       if (userByUid != null) return userByUid;
 
-      final snapshot = await _db
+      // 2. Try searching by displayId (Zuu ID) - exact match
+      final displayIdSnapshot = await _db
           .ref(AppConstants.usersPath)
           .orderByChild('displayId')
           .equalTo(normalized)
           .get();
 
-      if (snapshot.exists && snapshot.value != null) {
-        final data = snapshot.value as Map<dynamic, dynamic>;
+      if (displayIdSnapshot.exists && displayIdSnapshot.value != null) {
+        final data = displayIdSnapshot.value as Map<dynamic, dynamic>;
         if (data.isNotEmpty) {
           final entry = data.entries.first;
           return UserModel.fromJson(entry.value as Map<dynamic, dynamic>, entry.key as String);
         }
       }
 
+      // 3. Fallback: Search all users by name, displayId, email, or Firebase UID (contains/ignore case)
       final users = await getAllUsers();
       for (final user in users) {
-        if (user.name.toLowerCase().contains(normalized)) {
+        if (user.uid.toLowerCase() == normalized ||
+            user.displayId.toLowerCase() == normalized ||
+            user.email.toLowerCase() == normalized ||
+            user.name.toLowerCase().contains(normalized) ||
+            user.displayId.toLowerCase().contains(normalized)) {
           return user;
         }
       }

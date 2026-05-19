@@ -52,7 +52,18 @@ class _HomeScreenState extends State<HomeScreen> {
         if (currentUser != null) {
           callProvider.startSearching(currentUser);
           context.go('/call');
+          return;
         }
+
+        // Profile not loaded yet (or DB issue). Try to refresh and show a clear message.
+        await context.read<AuthProvider>().refreshUser();
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your profile is still loading. Please try again in a moment.'),
+            backgroundColor: AppColors.error,
+          ),
+        );
       }
     } else {
       if (context.mounted) {

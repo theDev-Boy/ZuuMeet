@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/call_notification_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/database_service.dart';
+import '../services/location_service.dart';
 import '../utils/logger.dart';
 
 /// Manages authentication state across the app.
@@ -41,7 +42,9 @@ class AuthProvider extends ChangeNotifier {
     _authService.authStateChanges.listen((user) async {
       _firebaseUser = user;
       if (user != null) {
-        await _loadUserModel(user.uid);
+        if (!_isLoading) {
+          await _loadUserModel(user);
+        }
         _databaseService.setupPresence(user.uid);
         await _databaseService.setOnlineStatus(user.uid, true);
         await CallNotificationService().registerCurrentUser(user.uid);
@@ -52,8 +55,38 @@ class AuthProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> _loadUserModel(String uid) async {
+  Future<void> _loadUserModel(User user) async {
+    final uid = user.uid;
     _userModel = await _databaseService.getUser(uid);
+    
+    // If the profile is still missing, it might be a race condition with signup.
+    // Wait a moment and check again.
+    if (_userModel == null) {
+      await Future.delayed(const Duration(seconds: 1));
+      _userModel = await _databaseService.getUser(uid);
+      
+      // If it's still missing, auto-create a minimal profile.
+      if (_userModel == null) {
+        try {
+          final now = DateTime.now().millisecondsSinceEpoch;
+          final displayId = await _databaseService.generateUniqueDisplayId();
+          final model = UserModel(
+            uid: uid,
+            name: (user.displayName ?? '').isNotEmpty ? user.displayName! : 'User',
+            email: user.email ?? '',
+            photoUrl: user.photoURL,
+            createdAt: now,
+            lastActive: now,
+            displayId: displayId,
+          );
+          await _databaseService.saveUser(model);
+          _userModel = model;
+          logger.i('Auto-created missing profile for $uid');
+        } catch (e) {
+          logger.e('Failed to auto-create user profile', error: e);
+        }
+      }
+    }
     
     // Legacy support: if user has no displayId, generate and save it now
     if (_userModel != null && _userModel!.displayId.isEmpty) {
@@ -62,12 +95,35 @@ class AuthProvider extends ChangeNotifier {
       _userModel = _userModel!.copyWith(displayId: newDisplayId);
       logger.i('Generated legacy UID for user $uid: $newDisplayId');
     }
+
+    // Auto-detect and sync country/flag if missing or empty
+    if (_userModel != null && (_userModel!.countryCode.isEmpty || _userModel!.country.isEmpty)) {
+      Future.microtask(() async {
+        try {
+          final loc = await LocationService().getCountry();
+          if (loc['countryCode'] != null && loc['countryCode']!.isNotEmpty) {
+            await _databaseService.updateUser(uid, {
+              'country': loc['country'] ?? 'Unknown Location',
+              'countryCode': loc['countryCode'] ?? '',
+            });
+            _userModel = _userModel!.copyWith(
+              country: loc['country'] ?? 'Unknown Location',
+              countryCode: loc['countryCode'] ?? '',
+            );
+            notifyListeners();
+            logger.i('Successfully auto-detected and synced country/flag for $uid: ${loc['countryCode']}');
+          }
+        } catch (e) {
+          logger.w('Failed to auto-detect country on load', error: e);
+        }
+      });
+    }
   }
 
   /// Reload the user model from Firebase.
   Future<void> refreshUser() async {
     if (_firebaseUser != null) {
-      await _loadUserModel(_firebaseUser!.uid);
+      await _loadUserModel(_firebaseUser!);
       notifyListeners();
     }
   }
@@ -163,7 +219,7 @@ class AuthProvider extends ChangeNotifier {
         password: password,
       );
       if (user != null) {
-        await _loadUserModel(user.uid);
+        await _loadUserModel(user);
         _firebaseUser = user;
         _isNewUser = false;
         _setLoading(false);
