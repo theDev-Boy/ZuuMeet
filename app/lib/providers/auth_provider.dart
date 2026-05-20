@@ -24,7 +24,7 @@ class AuthProvider extends ChangeNotifier {
   UserModel? get userModel => _userModel;
   bool get isLoading => _isLoading;
   String? get error => _error;
-  bool get isLoggedIn => _firebaseUser != null;
+  bool get isLoggedIn => _firebaseUser != null && _userModel != null;
   bool get isNewUser => _isNewUser;
   bool get hasCompletedProfile =>
       _userModel != null && 
@@ -56,67 +56,81 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> _loadUserModel(User user) async {
-    final uid = user.uid;
-    _userModel = await _databaseService.getUser(uid);
-    
-    // If the profile is still missing, it might be a race condition with signup.
-    // Wait a moment and check again.
-    if (_userModel == null) {
-      await Future.delayed(const Duration(seconds: 1));
+    try {
+      final uid = user.uid;
       _userModel = await _databaseService.getUser(uid);
       
-      // If it's still missing, auto-create a minimal profile.
+      // If the profile is still missing, it might be a race condition with signup.
+      // Wait a moment and check again.
       if (_userModel == null) {
-        try {
-          final now = DateTime.now().millisecondsSinceEpoch;
-          final displayId = await _databaseService.generateUniqueDisplayId();
-          final model = UserModel(
-            uid: uid,
-            name: (user.displayName ?? '').isNotEmpty ? user.displayName! : 'User',
-            email: user.email ?? '',
-            photoUrl: user.photoURL,
-            createdAt: now,
-            lastActive: now,
-            displayId: displayId,
-          );
-          await _databaseService.saveUser(model);
-          _userModel = model;
-          logger.i('Auto-created missing profile for $uid');
-        } catch (e) {
-          logger.e('Failed to auto-create user profile', error: e);
+        await Future.delayed(const Duration(seconds: 1));
+        _userModel = await _databaseService.getUser(uid);
+        
+        // If it's still missing, auto-create a minimal profile.
+        if (_userModel == null) {
+          try {
+            final now = DateTime.now().millisecondsSinceEpoch;
+            final displayId = await _databaseService.generateUniqueDisplayId();
+            final model = UserModel(
+              uid: uid,
+              name: (user.displayName ?? '').isNotEmpty ? user.displayName! : 'User',
+              email: user.email ?? '',
+              photoUrl: user.photoURL,
+              createdAt: now,
+              lastActive: now,
+              displayId: displayId,
+            );
+            await _databaseService.saveUser(model);
+            _userModel = model;
+            logger.i('Auto-created missing profile for $uid');
+          } catch (e) {
+            logger.e('Failed to auto-create user profile', error: e);
+          }
         }
       }
-    }
-    
-    // Legacy support: if user has no displayId, generate and save it now
-    if (_userModel != null && _userModel!.displayId.isEmpty) {
-      final newDisplayId = await _databaseService.generateUniqueDisplayId();
-      await _databaseService.updateUser(uid, {'displayId': newDisplayId});
-      _userModel = _userModel!.copyWith(displayId: newDisplayId);
-      logger.i('Generated legacy UID for user $uid: $newDisplayId');
+      
+      // Legacy support: if user has no displayId, generate and save it now
+      if (_userModel != null && _userModel!.displayId.isEmpty) {
+        final newDisplayId = await _databaseService.generateUniqueDisplayId();
+        await _databaseService.updateUser(uid, {'displayId': newDisplayId});
+        _userModel = _userModel!.copyWith(displayId: newDisplayId);
+        logger.i('Generated legacy UID for user $uid: $newDisplayId');
+      }
+
+      // Auto-detect and sync country/flag if missing or empty
+      if (_userModel != null && (_userModel!.countryCode.isEmpty || _userModel!.country.isEmpty)) {
+        Future.microtask(() async {
+          try {
+            final loc = await LocationService().getCountry();
+            if (loc['countryCode'] != null && loc['countryCode']!.isNotEmpty) {
+              await _databaseService.updateUser(uid, {
+                'country': loc['country'] ?? 'Unknown Location',
+                'countryCode': loc['countryCode'] ?? '',
+              });
+              _userModel = _userModel!.copyWith(
+                country: loc['country'] ?? 'Unknown Location',
+                countryCode: loc['countryCode'] ?? '',
+              );
+              notifyListeners();
+              logger.i('Successfully auto-detected and synced country/flag for $uid: ${loc['countryCode']}');
+            }
+          } catch (e) {
+            logger.w('Failed to auto-detect country on load', error: e);
+          }
+        });
+      }
+    } catch (e) {
+      logger.e('Error loading user model', error: e);
+      _userModel = null;
     }
 
-    // Auto-detect and sync country/flag if missing or empty
-    if (_userModel != null && (_userModel!.countryCode.isEmpty || _userModel!.country.isEmpty)) {
-      Future.microtask(() async {
-        try {
-          final loc = await LocationService().getCountry();
-          if (loc['countryCode'] != null && loc['countryCode']!.isNotEmpty) {
-            await _databaseService.updateUser(uid, {
-              'country': loc['country'] ?? 'Unknown Location',
-              'countryCode': loc['countryCode'] ?? '',
-            });
-            _userModel = _userModel!.copyWith(
-              country: loc['country'] ?? 'Unknown Location',
-              countryCode: loc['countryCode'] ?? '',
-            );
-            notifyListeners();
-            logger.i('Successfully auto-detected and synced country/flag for $uid: ${loc['countryCode']}');
-          }
-        } catch (e) {
-          logger.w('Failed to auto-detect country on load', error: e);
-        }
-      });
+    // Force sign out if loading failed permanently to prevent half-auth state
+    if (_userModel == null) {
+      logger.e('User profile missing and auto-creation failed for ${user.uid}. Forcing sign-out.');
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+      _firebaseUser = null;
     }
   }
 
@@ -188,11 +202,22 @@ class AuthProvider extends ChangeNotifier {
       return false;
     } on FirebaseAuthException catch (e) {
       _error = AuthService.getErrorMessage(e);
+      // Try to clean up Firebase Auth session if auth succeeded but DB failed
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+      _firebaseUser = null;
+      _userModel = null;
       _setLoading(false);
       return false;
     } catch (e) {
       _error = 'An unexpected error occurred.';
       logger.e('Sign up error', error: e);
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+      _firebaseUser = null;
+      _userModel = null;
       _setLoading(false);
       return false;
     }
@@ -220,6 +245,15 @@ class AuthProvider extends ChangeNotifier {
       );
       if (user != null) {
         await _loadUserModel(user);
+        if (_userModel == null) {
+          _error = 'Failed to load user profile. Please try again.';
+          try {
+            await _authService.signOut();
+          } catch (_) {}
+          _firebaseUser = null;
+          _setLoading(false);
+          return false;
+        }
         _firebaseUser = user;
         _isNewUser = false;
         _setLoading(false);
@@ -234,6 +268,11 @@ class AuthProvider extends ChangeNotifier {
     } catch (e) {
       _error = 'An unexpected error occurred.';
       logger.e('Sign in error', error: e);
+      try {
+        await _authService.signOut();
+      } catch (_) {}
+      _firebaseUser = null;
+      _userModel = null;
       _setLoading(false);
       return false;
     }

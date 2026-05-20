@@ -43,6 +43,20 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     final auth = context.read<AuthProvider>();
+    
+    // If user is logged in to Firebase Auth but userModel hasn't finished loading yet,
+    // wait for it (up to a reasonable timeout of 5 seconds to avoid infinite loops).
+    if (auth.firebaseUser != null && auth.userModel == null) {
+      final startTime = DateTime.now();
+      while (mounted && 
+             auth.firebaseUser != null && 
+             auth.userModel == null && 
+             DateTime.now().difference(startTime).inSeconds < 5) {
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+    }
+    if (!mounted) return;
+
     if (auth.isLoggedIn) {
       context.go('/home');
     } else {
@@ -59,9 +73,9 @@ class _SplashScreenState extends State<SplashScreen>
           child: ScaleTransition(
             scale: _scaleAnim,
             child: Image.asset(
-              'new_icon.png',
-              width: 180,
-              height: 180,
+              'new_logo.png',
+              width: 240,
+              height: 240,
               fit: BoxFit.contain,
             ),
           ),

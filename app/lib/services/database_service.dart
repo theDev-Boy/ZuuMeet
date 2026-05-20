@@ -64,17 +64,27 @@ class DatabaseService {
   }
 
   Future<String> generateUniqueDisplayId() async {
-    while (true) {
-      final candidate = _createDisplayId();
-      final snapshot = await _db
-          .ref(AppConstants.usersPath)
-          .orderByChild('displayId')
-          .equalTo(candidate)
-          .get();
-      if (!snapshot.exists || snapshot.value == null) {
-        return candidate;
+    try {
+      for (int i = 0; i < 3; i++) {
+        final candidate = _createDisplayId();
+        final snapshot = await _db
+            .ref(AppConstants.usersPath)
+            .orderByChild('displayId')
+            .equalTo(candidate)
+            .get()
+            .timeout(const Duration(seconds: 3));
+        if (!snapshot.exists || snapshot.value == null) {
+          return candidate;
+        }
       }
+    } catch (e) {
+      logger.w('Database query for displayId uniqueness failed or was denied, using secure fallback', error: e);
     }
+    // Secure fallback: Generate a highly unique 8-character suffix
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final random = Random.secure();
+    final suffix = List.generate(8, (_) => chars[random.nextInt(chars.length)]).join();
+    return 'zu-$suffix';
   }
 
   /// Set user online/offline status and update lastActive.
